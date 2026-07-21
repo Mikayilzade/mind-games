@@ -2,6 +2,8 @@ const CACHE = 'mind-games-v1';
 const ASSETS = [
   './',
   './index.html',
+  './styles.css',
+  './app.js',
   './manifest.webmanifest',
   './icons/icon.svg',
   './icons/apple-touch-icon.svg'
