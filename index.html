@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0b1020">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Mind Games">
+  <meta name="description" content="Ежедневные короткие тренировки памяти, внимания и логики с наглядной историей прогресса.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.svg">
+  <link rel="stylesheet" href="styles.css">
+  <title>Mind Games — тренировка памяти</title>
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow" id="todayLabel">Сегодня</p>
+        <h1 id="screenTitle">Тренировка</h1>
+      </div>
+      <button class="streak-pill" id="streakButton" type="button" aria-label="Серия тренировок">
+        <span aria-hidden="true">🔥</span>
+        <strong id="streakValue">0</strong>
+      </button>
+    </header>
+
+    <main id="screen" class="screen" aria-live="polite"></main>
+
+    <nav class="bottom-nav" aria-label="Основная навигация">
+      <button class="nav-item is-active" type="button" data-route="today">
+        <span class="nav-icon" aria-hidden="true">◉</span>
+        <span>Сегодня</span>
+      </button>
+      <button class="nav-item" type="button" data-route="games">
+        <span class="nav-icon" aria-hidden="true">◇</span>
+        <span>Игры</span>
+      </button>
+      <button class="nav-item" type="button" data-route="progress">
+        <span class="nav-icon" aria-hidden="true">↗</span>
+        <span>Прогресс</span>
+      </button>
+      <button class="nav-item" type="button" data-route="profile">
+        <span class="nav-icon" aria-hidden="true">☻</span>
+        <span>Профиль</span>
+      </button>
+    </nav>
+  </div>
+
+  <div id="modalRoot"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="app.js" defer></script>
+</body>
+</html>
