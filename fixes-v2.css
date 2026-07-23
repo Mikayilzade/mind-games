@@ -1,0 +1,382 @@
+
+/* Mind Games 1.1 — clearer logic modes and mobile polish */
+
+.game-stage {
+  gap: 0;
+  scroll-behavior: smooth;
+}
+
+.game-stage .instruction {
+  max-width: 590px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.logic-guide,
+.chess-task {
+  width: min(100%, 560px);
+  margin: 0 auto 12px;
+  padding: 13px 15px;
+  border-radius: 17px;
+  border: 1px solid rgba(62,216,231,.18);
+  background: rgba(62,216,231,.07);
+  line-height: 1.4;
+}
+
+.logic-guide strong,
+.chess-task strong {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.logic-guide span,
+.chess-task span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.side-badge {
+  display: inline-flex !important;
+  width: fit-content;
+  margin-bottom: 8px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.08);
+  color: var(--cyan) !important;
+  font-size: 10px !important;
+  font-weight: 850;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.game-actions {
+  width: min(100%, 560px);
+  margin: 16px auto 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0,1fr));
+  gap: 10px;
+}
+
+.game-actions > button {
+  min-width: 0;
+}
+
+.hint-button[disabled] {
+  opacity: .48;
+  color: var(--muted);
+}
+
+.hint-button:not([disabled]) {
+  border-color: rgba(255,209,102,.34);
+  color: var(--yellow);
+  background: rgba(255,209,102,.09);
+}
+
+/* Sudoku */
+
+.sudoku-board {
+  width: min(100%, 560px);
+  aspect-ratio: 1;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(var(--size), minmax(0,1fr));
+  gap: 1px;
+  border: 3px solid rgba(255,255,255,.42);
+  border-radius: 16px;
+  overflow: hidden;
+  background: rgba(255,255,255,.18);
+  box-shadow: 0 16px 44px rgba(0,0,0,.24);
+}
+
+.sudoku-cell {
+  position: relative;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: #18233d;
+  color: #f5f7ff;
+  font-weight: 800;
+  transition: background .14s ease, color .14s ease, transform .1s ease;
+}
+
+.sudoku-4 .sudoku-cell { font-size: clamp(30px, 10vw, 44px); }
+.sudoku-6 .sudoku-cell { font-size: clamp(22px, 7vw, 34px); }
+.sudoku-9 .sudoku-cell { font-size: clamp(15px, 4.8vw, 25px); }
+
+.sudoku-cell.block-right {
+  border-right: 3px solid rgba(255,255,255,.42);
+}
+
+.sudoku-cell.block-bottom {
+  border-bottom: 3px solid rgba(255,255,255,.42);
+}
+
+.sudoku-cell.is-fixed {
+  background: #121c32;
+  color: var(--cyan);
+}
+
+.sudoku-cell.is-user {
+  color: var(--text);
+}
+
+.sudoku-cell.is-peer {
+  background: #1b2946;
+}
+
+.sudoku-cell.is-same {
+  background: rgba(62,216,231,.18);
+  color: #bff9ff;
+}
+
+.sudoku-cell.is-active {
+  z-index: 2;
+  background: rgba(155,124,255,.46);
+  box-shadow: inset 0 0 0 3px var(--purple);
+}
+
+.sudoku-cell.is-error {
+  color: #fff;
+  background: rgba(255,123,138,.42);
+  animation: sudoku-shake .28s ease;
+}
+
+.sudoku-cell.is-hinted {
+  background: rgba(255,209,102,.30);
+  box-shadow: inset 0 0 0 3px rgba(255,209,102,.72);
+}
+
+.sudoku-pad {
+  width: min(100%, 560px);
+  margin: 16px auto 0;
+  display: grid;
+  grid-template-columns: repeat(var(--size), minmax(0,1fr));
+  gap: 8px;
+}
+
+.sudoku-key {
+  min-width: 0;
+  min-height: 50px;
+  padding: 8px 2px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-3);
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.sudoku-key:active {
+  transform: scale(.95);
+  background: rgba(155,124,255,.30);
+}
+
+.sudoku-erase {
+  color: var(--muted);
+}
+
+/* Chess */
+
+.chess-board {
+  position: relative;
+  width: min(100%, 540px);
+  aspect-ratio: 1;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0,1fr));
+  border: 3px solid rgba(255,255,255,.34);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 18px 48px rgba(0,0,0,.30);
+  background: #d9dce5;
+}
+
+.chess-square {
+  position: relative;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+}
+
+.chess-square.is-light { background: #d9dce5; }
+.chess-square.is-dark { background: #777b9d; }
+
+.chess-piece {
+  position: relative;
+  z-index: 2;
+  display: block;
+  font-family: "Arial Unicode MS", "Segoe UI Symbol", serif;
+  font-size: clamp(27px, 8.5vw, 49px);
+  line-height: 1;
+  transform: translateY(-1px);
+  pointer-events: none;
+}
+
+.chess-piece.is-white {
+  color: #fffdf5;
+  text-shadow:
+    -1px -1px 0 #25304a,
+     1px -1px 0 #25304a,
+    -1px  1px 0 #25304a,
+     1px  1px 0 #25304a,
+     0 2px 2px rgba(0,0,0,.42);
+}
+
+.chess-piece.is-black {
+  color: #111827;
+  text-shadow: 0 1px 1px rgba(255,255,255,.26);
+}
+
+.file-label,
+.rank-label {
+  position: absolute;
+  z-index: 3;
+  font-size: clamp(7px, 2.2vw, 11px);
+  font-weight: 850;
+  pointer-events: none;
+  opacity: .72;
+}
+
+.file-label {
+  right: 4px;
+  bottom: 3px;
+}
+
+.rank-label {
+  left: 4px;
+  top: 3px;
+}
+
+.chess-square.is-light .file-label,
+.chess-square.is-light .rank-label { color: #596079; }
+
+.chess-square.is-dark .file-label,
+.chess-square.is-dark .rank-label { color: #eef0fa; }
+
+.chess-square.is-selected {
+  z-index: 2;
+  box-shadow: inset 0 0 0 4px var(--yellow);
+}
+
+.chess-square.is-selected::after,
+.chess-square.is-hint-from::after,
+.chess-square.is-hint-to::after,
+.chess-square.is-solution-from::after,
+.chess-square.is-solution-to::after {
+  content: "";
+  position: absolute;
+  inset: 9%;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.chess-square.is-selected::after {
+  border: 3px solid rgba(255,209,102,.95);
+}
+
+.chess-square.is-hint-from {
+  box-shadow: inset 0 0 0 4px var(--yellow);
+  animation: hint-pulse 1s ease-in-out infinite alternate;
+}
+
+.chess-square.is-hint-to {
+  box-shadow: inset 0 0 0 4px var(--cyan);
+  animation: hint-pulse 1s ease-in-out infinite alternate;
+}
+
+.chess-square.is-hint-to::after {
+  background: rgba(62,216,231,.35);
+}
+
+.chess-square.is-solution-from {
+  box-shadow: inset 0 0 0 4px rgba(255,209,102,.95);
+}
+
+.chess-square.is-solution-to {
+  box-shadow: inset 0 0 0 5px var(--green);
+}
+
+.chess-square.is-solution-to::after {
+  background: rgba(85,215,162,.42);
+}
+
+.chess-square.is-wrong-move {
+  box-shadow: inset 0 0 0 5px var(--red);
+  animation: sudoku-shake .28s ease;
+}
+
+.chess-actions {
+  grid-template-columns: 1fr;
+}
+
+.instruction strong {
+  color: var(--text);
+}
+
+@keyframes sudoku-shake {
+  0%,100% { transform: translateX(0); }
+  35% { transform: translateX(-4px); }
+  70% { transform: translateX(4px); }
+}
+
+@keyframes hint-pulse {
+  from { filter: brightness(1); }
+  to { filter: brightness(1.25); }
+}
+
+@media (max-width: 430px) {
+  .game-stage {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .game-hud {
+    margin-bottom: 12px;
+  }
+
+  .instruction {
+    margin-bottom: 10px;
+    min-height: 36px;
+  }
+
+  .logic-guide,
+  .chess-task {
+    padding: 11px 12px;
+  }
+
+  .sudoku-board,
+  .chess-board {
+    border-radius: 12px;
+  }
+
+  .sudoku-pad {
+    gap: 6px;
+  }
+
+  .sudoku-key {
+    min-height: 46px;
+    border-radius: 12px;
+  }
+}
+
+@media (max-height: 720px) {
+  .game-stage {
+    padding-top: 14px;
+  }
+
+  .logic-guide,
+  .chess-task {
+    margin-bottom: 8px;
+  }
+
+  .game-hud {
+    margin-bottom: 10px;
+  }
+}
