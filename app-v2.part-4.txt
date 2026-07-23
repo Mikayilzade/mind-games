@@ -151,6 +151,10 @@
       candidatesNode.textContent = selectedValue ? `Выбрано число ${selectedValue}` : 'Выбери пустую клетку';
       return;
     }
+    if (values[selected] !== 0) {
+      candidatesNode.textContent = `В клетке стоит ${values[selected]}. Выбери другое число или очисти клетку.`;
+      return;
+    }
     const candidates = getCandidates(values, selected);
     candidatesNode.innerHTML = candidates.length
       ? `Возможные без прямого конфликта: <strong>${candidates.join(' · ')}</strong>`
