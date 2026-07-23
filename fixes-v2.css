@@ -89,10 +89,6 @@
   align-items: center;
 }
 
-.game-stage.is-sudoku-game > * {
-  width: min(100%, 600px);
-}
-
 .sudoku-info {
   padding: 10px 14px;
   margin-bottom: 10px;
