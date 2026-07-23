@@ -1,0 +1,297 @@
+          stage.querySelector(`[data-card="${b}"]`).classList.add('is-matched');
+          open = [];
+          canTap = true;
+          if (matched.size === symbols.length) {
+            const optimal = symbols.length / 2;
+            activeGame.mistakes = Math.max(0, moves - optimal);
+            activeGame.accuracy = Math.max(0, Math.round(optimal / moves * 100));
+            activeGame.score = Math.max(100, Math.round(720 + optimal * 105 - elapsedSeconds() * 6 - activeGame.mistakes * 45));
+            setTimeout(finishActiveGame, 420);
+          }
+        } else {
+          activeGame.mistakes += 1;
+          setTimeout(() => {
+            stage.querySelector(`[data-card="${a}"]`)?.classList.remove('is-open');
+            stage.querySelector(`[data-card="${b}"]`)?.classList.remove('is-open');
+            open = [];
+            canTap = true;
+          }, 520);
+        }
+      }
+    };
+    stage.addEventListener('click', click);
+    activeGame.cleanup = () => { clearTimeout(timeout); stage.removeEventListener('click', click); };
+  }
+
+  async function startSequenceGame() {
+    const session = activeGame;
+    const { sequence, paceMs } = session.spec;
+    const stage = getGameStage();
+    let input = [];
+    let alive = true;
+    const content = `<div><div class="sequence-display" data-sequence-display></div><div class="sequence-pad" hidden>${SEQUENCE_SYMBOLS.map(symbol => `<button class="sequence-key" type="button" data-symbol="${symbol}">${symbol}</button>`).join('')}</div></div>`;
+    stage.innerHTML = basePlayLayout('Длина', sequence.length, content, 'Следи за последовательностью');
+    startHudTimer();
+    const display = stage.querySelector('[data-sequence-display]');
+    for (let i = 0; i < sequence.length && alive && activeGame === session; i++) {
+      display.innerHTML = `<span class="sequence-token">${sequence[i]}</span>`;
+      await wait(paceMs);
+      display.innerHTML = '';
+      await wait(Math.max(140, paceMs * .34));
+    }
+    if (!alive || activeGame !== session) return;
+    stage.querySelector('.instruction').textContent = 'Повтори цепочку';
+    stage.querySelector('.sequence-pad').hidden = false;
+    const click = event => {
+      const key = event.target.closest('[data-symbol]');
+      if (!key) return;
+      const symbol = key.dataset.symbol;
+      const expected = sequence[input.length];
+      activeGame.actions.push({ t: elapsedMs(), type: 'symbol', value: symbol });
+      input.push(symbol);
+      display.innerHTML = input.map(value => `<span class="sequence-token">${value}</span>`).join('');
+      if (symbol !== expected) {
+        activeGame.mistakes = 1;
+        activeGame.accuracy = Math.round((input.length - 1) / sequence.length * 100);
+        activeGame.score = Math.max(50, 250 + (input.length - 1) * 100);
+        stage.querySelector('.instruction').textContent = `Нужен был символ ${expected}`;
+        stage.querySelector('.sequence-pad').hidden = true;
+        setTimeout(finishActiveGame, 700);
+      } else if (input.length === sequence.length) {
+        activeGame.accuracy = 100;
+        activeGame.score = Math.max(100, Math.round(620 + sequence.length * 120 - elapsedSeconds() * 5));
+        stage.querySelector('.sequence-pad').hidden = true;
+        setTimeout(finishActiveGame, 380);
+      }
+    };
+    stage.addEventListener('click', click);
+    session.cleanup = () => { alive = false; stage.removeEventListener('click', click); };
+  }
+
+  function startSudokuGame() {
+    const stage = getGameStage();
+    const spec = activeGame.spec;
+    const values = [...spec.puzzle];
+    const notes = Array.from({ length: 81 }, () => new Set());
+    let selected = values.findIndex(value => value === 0);
+    let pencilMode = false;
+    let history = [];
+    let conflicts = new Set();
+    let hintTarget = -1;
+    let hintStage = 0;
+    let nextHintAt = performance.now() + 60000;
+    let pencilMarks = 0;
+    let undos = 0;
+    let hintsUsed = 0;
+    let wrongEntries = 0;
+
+    activeGame.stats = { pencilMarks: 0, undos: 0, hintsUsed: 0, wrongEntries: 0 };
+
+    stage.innerHTML = `<div class="sudoku-play">
+      <div>
+        <div class="game-hud"><div class="hud-chip"><span>Ошибки</span><strong data-primary>0</strong></div><div class="hud-chip"><span>Время</span><strong data-time>0:00</strong></div></div>
+        <div class="sudoku-topline"><span class="level-badge">${difficultyLabel(spec.level)} · ${spec.clues} чисел</span><span class="id-badge">Задача № ${challengeNumber(activeGame.task.challengeId)}</span></div>
+      </div>
+      <p class="sudoku-status" data-sudoku-status>Решай самостоятельно. Подсказка появится только по запросу.</p>
+      <div class="sudoku-center"><div class="sudoku-board" data-sudoku-board role="grid" aria-label="Судоку 9 на 9"></div></div>
+      <div class="sudoku-controls">
+        <div class="sudoku-number-pad">${Array.from({ length: 9 }, (_, i) => `<button class="sudoku-number" type="button" data-sudoku-number="${i + 1}">${i + 1}</button>`).join('')}</div>
+        <div class="sudoku-tools">
+          <button class="tool-button" type="button" data-pencil><strong>✎ <span class="pencil-count" data-pencil-state>Выкл</span></strong>Карандаш</button>
+          <button class="tool-button" type="button" data-undo disabled><strong>↶</strong>Отменить</button>
+          <button class="tool-button" type="button" data-erase><strong>⌫</strong>Очистить</button>
+          <button class="tool-button" type="button" data-hint disabled><strong>?</strong><span data-hint-label>Через 1:00</span></button>
+        </div>
+        <div class="keyboard-tip">ПК: стрелки — выбор · 1–9 — ввод · P — карандаш · Backspace — очистить · Ctrl+Z — отменить</div>
+      </div>
+    </div>`;
+
+    const boardNode = stage.querySelector('[data-sudoku-board]');
+    const statusNode = stage.querySelector('[data-sudoku-status]');
+    const pencilButton = stage.querySelector('[data-pencil]');
+    const undoButton = stage.querySelector('[data-undo]');
+    const hintButton = stage.querySelector('[data-hint]');
+    const hintLabel = stage.querySelector('[data-hint-label]');
+    const pencilState = stage.querySelector('[data-pencil-state]');
+
+    renderBoard();
+    startHudTimer();
+    const hintTimer = setInterval(updateHintButton, 250);
+
+    function renderBoard() {
+      const selectedValue = selected >= 0 ? values[selected] : 0;
+      boardNode.innerHTML = values.map((value, index) => {
+        const row = Math.floor(index / 9);
+        const col = index % 9;
+        const fixed = spec.puzzle[index] !== 0;
+        const related = selected >= 0 && isSudokuPeer(index, selected);
+        const same = selectedValue && value === selectedValue && index !== selected;
+        const classes = [
+          'sudoku-cell', fixed ? 'is-fixed' : '', related ? 'is-related' : '', same ? 'is-same' : '',
+          index === selected ? 'is-selected' : '', conflicts.has(index) ? 'is-conflict' : '', index === hintTarget ? 'is-hint-target' : ''
+        ].filter(Boolean).join(' ');
+        const content = value ? String(value) : renderNotes(notes[index]);
+        return `<button class="${classes}" type="button" role="gridcell" data-sudoku-cell="${index}" data-row="${row}" data-col="${col}" aria-label="Строка ${row + 1}, колонка ${col + 1}${value ? `, число ${value}` : ', пусто'}">${content}</button>`;
+      }).join('');
+      undoButton.disabled = history.length === 0;
+      pencilButton.classList.toggle('is-active', pencilMode);
+      pencilState.textContent = pencilMode ? 'Вкл' : 'Выкл';
+    }
+
+    function renderNotes(set) {
+      return `<span class="sudoku-notes">${Array.from({ length: 9 }, (_, i) => `<span class="sudoku-note">${set.has(i + 1) ? i + 1 : ''}</span>`).join('')}</span>`;
+    }
+
+    function takeSnapshot() {
+      return {
+        values: [...values],
+        notes: notes.map(set => [...set]),
+        selected,
+        pencilMode,
+        conflicts: [...conflicts],
+        hintTarget
+      };
+    }
+
+    function restoreSnapshot(snapshot) {
+      values.splice(0, values.length, ...snapshot.values);
+      snapshot.notes.forEach((items, index) => { notes[index] = new Set(items); });
+      selected = snapshot.selected;
+      pencilMode = snapshot.pencilMode;
+      conflicts = new Set(snapshot.conflicts);
+      hintTarget = snapshot.hintTarget;
+      renderBoard();
+      setStatus('Ход отменён. Карандашные пометки восстановлены.', '');
+    }
+
+    function pushHistory(snapshot = takeSnapshot()) {
+      history.push(snapshot);
+      if (history.length > 160) history.shift();
+      undoButton.disabled = false;
+    }
+
+    function enterNumber(number) {
+      if (selected < 0 || spec.puzzle[selected] !== 0) return;
+      hintTarget = -1;
+      if (pencilMode) {
+        if (values[selected]) return;
+        pushHistory();
+        if (notes[selected].has(number)) notes[selected].delete(number);
+        else notes[selected].add(number);
+        pencilMarks += 1;
+        activeGame.stats.pencilMarks = pencilMarks;
+        activeGame.actions.push({ t: elapsedMs(), type: 'note', cell: selected, value: number, on: notes[selected].has(number) });
+        renderBoard();
+        setStatus(notes[selected].has(number) ? `Кандидат ${number} добавлен.` : `Кандидат ${number} убран.`, '');
+        return;
+      }
+
+      const hadCandidate = notes[selected].has(number);
+      if (hadCandidate) notes[selected].delete(number);
+      const before = takeSnapshot();
+      if (hadCandidate) before.notes[selected] = [...notes[selected]];
+      pushHistory(before);
+      values[selected] = number;
+      notes[selected].clear();
+      const peers = sudokuPeers(selected);
+      for (const peer of peers) notes[peer].delete(number);
+      conflicts = findSudokuConflicts(values);
+      activeGame.actions.push({ t: elapsedMs(), type: 'value', cell: selected, value: number, conflict: conflicts.has(selected) });
+
+      if (conflicts.has(selected)) {
+        wrongEntries += 1;
+        activeGame.mistakes += 1;
+        activeGame.stats.wrongEntries = wrongEntries;
+        updateHudPrimary(activeGame.mistakes);
+        const conflictCells = [...conflicts].filter(index => index !== selected && values[index] === number && isSudokuPeer(index, selected));
+        const reason = conflictReason(selected, conflictCells[0]);
+        setStatus(`Число ${number} уже есть ${reason}. Конфликтующие клетки выделены красным.`, 'error');
+      } else {
+        setStatus(`Число ${number} поставлено. Кандидат ${number} автоматически убран из связанных клеток.`, '');
+      }
+      renderBoard();
+      if (!conflicts.size && values.every(Boolean)) finishSudoku();
+    }
+
+    function eraseSelected() {
+      if (selected < 0 || spec.puzzle[selected] !== 0) return;
+      if (!values[selected] && notes[selected].size === 0) return;
+      pushHistory();
+      values[selected] = 0;
+      notes[selected].clear();
+      conflicts = findSudokuConflicts(values);
+      activeGame.actions.push({ t: elapsedMs(), type: 'erase', cell: selected });
+      renderBoard();
+      setStatus('Клетка очищена.', '');
+    }
+
+    function undo() {
+      const snapshot = history.pop();
+      if (!snapshot) return;
+      undos += 1;
+      activeGame.stats.undos = undos;
+      activeGame.actions.push({ t: elapsedMs(), type: 'undo' });
+      restoreSnapshot(snapshot);
+    }
+
+    function togglePencil() {
+      pencilMode = !pencilMode;
+      activeGame.actions.push({ t: elapsedMs(), type: 'pencil-mode', on: pencilMode });
+      renderBoard();
+      setStatus(pencilMode ? 'Карандаш включён: цифры добавляются как варианты.' : 'Карандаш выключен: цифра станет постоянным ответом.', '');
+    }
+
+    function moveSelection(dx, dy) {
+      if (selected < 0) selected = 0;
+      const row = Math.floor(selected / 9);
+      const col = selected % 9;
+      const nextRow = Math.max(0, Math.min(8, row + dy));
+      const nextCol = Math.max(0, Math.min(8, col + dx));
+      selected = nextRow * 9 + nextCol;
+      hintTarget = -1;
+      renderBoard();
+    }
+
+    function checkBoard() {
+      conflicts = findSudokuConflicts(values);
+      renderBoard();
+      if (conflicts.size) {
+        setStatus('Есть видимые повторы в строке, колонке или блоке 3×3.', 'error');
+        return;
+      }
+      if (values.every(Boolean)) finishSudoku();
+      else setStatus('Видимых конфликтов нет. Продолжай решать — приложение не раскрывает правильные числа.', '');
+    }
+
+    function useHint() {
+      if (performance.now() < nextHintAt) return;
+      let target = selected >= 0 && !values[selected] ? selected : findBestHintCell(values);
+      if (target < 0) return;
+      selected = target;
+      hintTarget = target;
+      hintsUsed += 1;
+      activeGame.stats.hintsUsed = hintsUsed;
+      activeGame.actions.push({ t: elapsedMs(), type: 'hint', cell: target, stage: hintStage + 1 });
+      if (hintStage === 0) {
+        const candidates = sudokuCandidates(values, target);
+        setStatus(`Намёк: внимательно проверь строку ${Math.floor(target / 9) + 1}, колонку ${target % 9 + 1} и её блок. В клетке осталось ${candidates.length} возможных варианта.`, 'hint');
+        hintStage = 1;
+        nextHintAt = performance.now() + 30000;
+      } else {
+        setStatus(`Сильная подсказка: в выделенной клетке должно стоять число ${spec.solution[target]}. Впиши его самостоятельно.`, 'hint');
+        hintStage = 0;
+        nextHintAt = performance.now() + 60000;
+      }
+      renderBoard();
+      updateHintButton();
+    }
+
+    function updateHintButton() {
+      const remaining = Math.max(0, nextHintAt - performance.now());
+      hintButton.disabled = remaining > 0;
+      if (remaining > 0) hintLabel.textContent = `Через ${formatDuration(remaining)}`;
+      else hintLabel.textContent = hintStage === 0 ? 'Намёк' : 'Показать число';
+    }
+
+    function setStatus(message, type) {
+      statusNode.textContent = message;
