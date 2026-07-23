@@ -1,0 +1,297 @@
+(() => {
+  'use strict';
+
+  const STORAGE_KEY = 'mind-games-state-v1';
+  const APP_VERSION = 4;
+  const ACTIVE_GAMES = ['grid', 'pairs', 'sequence', 'sudoku'];
+  const GAME_META = {
+    grid: { name: 'Вспышка', icon: '✦', skill: 'Зрительная память', description: 'Запомни подсвеченные клетки и восстанови рисунок.' },
+    pairs: { name: 'Пары', icon: '◫', skill: 'Память и скорость', description: 'Запомни расположение символов и открой все пары.' },
+    sequence: { name: 'Цепочка', icon: '➜', skill: 'Рабочая память', description: 'Запомни порядок символов и повтори его.' },
+    sudoku: { name: 'Судоку 9×9', icon: '▦', skill: 'Логика и концентрация', description: 'Полноценное судоку с карандашом, отменой хода и честной проверкой.' },
+    chess: { name: 'Шахматы — архив', icon: '♞', skill: 'Архив', description: 'Старые результаты сохранены, режим временно снят с тренировок.' }
+  };
+  const SYMBOLS = ['●', '▲', '■', '◆', '★', '✿', '☂', '☀', '☾', '♬', '⚑', '⬟'];
+  const SEQUENCE_SYMBOLS = ['●', '▲', '■', '◆', '★', '✿'];
+  const ACHIEVEMENTS = [
+    { id: 'first', icon: '🌱', name: 'Первый шаг', test: s => s.results.length >= 1 },
+    { id: 'five', icon: '🧠', name: '5 тренировок', test: s => s.results.length >= 5 },
+    { id: 'streak3', icon: '🔥', name: 'Серия 3 дня', test: s => s.bestStreak >= 3 },
+    { id: 'streak7', icon: '⚡', name: 'Неделя силы', test: s => s.bestStreak >= 7 },
+    { id: 'perfect', icon: '💎', name: 'Без ошибки', test: s => s.results.some(r => r.accuracy === 100) },
+    { id: 'speed', icon: '⏱️', name: 'Быстрее себя', test: s => hasImprovement(s, 20) },
+    { id: 'repeat', icon: '↻', name: 'Память жива', test: s => s.results.some(r => r.isRepeat) },
+    { id: 'allgames', icon: '🏅', name: 'Все режимы', test: s => ACTIVE_GAMES.every(id => s.results.some(r => r.gameId === id)) },
+    { id: 'pencil', icon: '✎', name: 'Логик', test: s => s.results.some(r => r.gameId === 'sudoku' && (r.stats?.pencilMarks || 0) >= 5) },
+    { id: 'level5', icon: '🚀', name: 'Уровень 5', test: s => getPlayerLevel(s.xp) >= 5 }
+  ];
+
+  const screen = document.getElementById('screen');
+  const screenTitle = document.getElementById('screenTitle');
+  const todayLabel = document.getElementById('todayLabel');
+  const streakValue = document.getElementById('streakValue');
+  const modalRoot = document.getElementById('modalRoot');
+  const toast = document.getElementById('toast');
+
+  let state = normalizeState(loadState());
+  let route = 'today';
+  let activeGame = null;
+  let timerInterval = null;
+  let toastTimer = null;
+  let lastTouchEnd = 0;
+
+  init();
+
+  function init() {
+    migrateState();
+    applyTheme();
+    ensureDailyPlan();
+    bindGlobalEvents();
+    updateStreakDisplay();
+    render();
+    preventPageZoom();
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('./service-worker.js?v=1.3.0').catch(() => {}));
+    }
+  }
+
+  function defaultState() {
+    return {
+      version: APP_VERSION,
+      createdAt: new Date().toISOString(),
+      xp: 0,
+      streak: 0,
+      bestStreak: 0,
+      lastTrainingDate: null,
+      results: [],
+      dailyPlans: {},
+      unlockedAchievements: [],
+      settings: { theme: 'light' }
+    };
+  }
+
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : defaultState();
+    } catch {
+      return defaultState();
+    }
+  }
+
+  function normalizeState(input) {
+    const base = defaultState();
+    const safe = input && typeof input === 'object' ? input : {};
+    return {
+      ...base,
+      ...safe,
+      results: Array.isArray(safe.results) ? safe.results : [],
+      dailyPlans: safe.dailyPlans && typeof safe.dailyPlans === 'object' ? safe.dailyPlans : {},
+      unlockedAchievements: Array.isArray(safe.unlockedAchievements) ? safe.unlockedAchievements : [],
+      settings: { ...base.settings, ...(safe.settings || {}) }
+    };
+  }
+
+  function migrateState() {
+    if (state.version !== APP_VERSION) {
+      state.version = APP_VERSION;
+      state.dailyPlans = {};
+      state.settings = { theme: 'light', ...(state.settings || {}) };
+      state.results = state.results.map(result => ({
+        ...result,
+        archived: result.gameId === 'chess' || (result.gameId === 'sudoku' && result.challengeSpec?.puzzle?.length !== 81) ? true : result.archived
+      }));
+      saveState();
+    }
+  }
+
+  function saveState() {
+    pruneOldPlans();
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* Private or sandboxed contexts may block storage. */ }
+  }
+
+  function pruneOldPlans() {
+    const keys = Object.keys(state.dailyPlans).sort().reverse();
+    keys.slice(60).forEach(key => delete state.dailyPlans[key]);
+  }
+
+  function preventPageZoom() {
+    document.addEventListener('gesturestart', event => event.preventDefault(), { passive: false });
+    document.addEventListener('dblclick', event => {
+      if (event.target.closest('button, .sudoku-board, .game-modal')) event.preventDefault();
+    }, { passive: false });
+    document.addEventListener('touchend', event => {
+      const now = Date.now();
+      if (now - lastTouchEnd <= 320 && event.target.closest('button, .sudoku-board, .game-modal')) event.preventDefault();
+      lastTouchEnd = now;
+    }, { passive: false });
+  }
+
+  function bindGlobalEvents() {
+    document.querySelector('.bottom-nav').addEventListener('click', event => {
+      const button = event.target.closest('[data-route]');
+      if (!button) return;
+      route = button.dataset.route;
+      render();
+    });
+    document.getElementById('streakButton').addEventListener('click', () => { route = 'progress'; render(); });
+    screen.addEventListener('click', handleScreenClick);
+  }
+
+  function handleScreenClick(event) {
+    const taskNode = event.target.closest('[data-task-id]');
+    if (taskNode) {
+      const task = getTodayPlan().tasks.find(item => item.id === taskNode.dataset.taskId);
+      if (task) openGame(task.gameId, task);
+      return;
+    }
+    const gameNode = event.target.closest('[data-game-id]');
+    if (gameNode) {
+      const gameId = gameNode.dataset.gameId;
+      if (!ACTIVE_GAMES.includes(gameId)) return;
+      const seed = hashString(`${todayKey()}-${gameId}-${Date.now()}`);
+      const spec = makeChallenge(gameId, seed, getAdaptiveLevel(gameId));
+      const challengeId = makeChallengeId(gameId, seed);
+      openGame(gameId, { id: `free-${Date.now()}`, gameId, challengeId, spec, isRepeat: false, completed: false, source: 'free' });
+      return;
+    }
+    if (event.target.closest('[data-theme-toggle]')) {
+      state.settings.theme = state.settings.theme === 'dark' ? 'light' : 'dark';
+      applyTheme();
+      saveState();
+      render();
+      return;
+    }
+    if (event.target.closest('[data-reset]') && window.confirm('Удалить весь прогресс и начать заново?')) {
+      state = defaultState();
+      ensureDailyPlan();
+      applyTheme();
+      saveState();
+      render();
+      showToast('Прогресс очищен');
+    }
+  }
+
+  function applyTheme() {
+    document.documentElement.dataset.theme = state.settings.theme === 'dark' ? 'dark' : 'light';
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = state.settings.theme === 'dark' ? '#151126' : '#f4f0fb';
+  }
+
+  function render() {
+    document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('is-active', item.dataset.route === route));
+    updateStreakDisplay();
+    const titles = { today: 'Тренировка', games: 'Все игры', progress: 'Мой прогресс', profile: 'Профиль' };
+    screenTitle.textContent = titles[route];
+    todayLabel.textContent = formatDateLong(new Date());
+    if (route === 'today') renderToday();
+    if (route === 'games') renderGames();
+    if (route === 'progress') renderProgress();
+    if (route === 'profile') renderProfile();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function renderToday() {
+    const plan = getTodayPlan();
+    const completed = plan.tasks.filter(task => task.completed).length;
+    const progress = Math.round((completed / plan.tasks.length) * 100);
+    const todayResults = state.results.filter(r => r.date === todayKey());
+    const todayMinutes = Math.round(todayResults.reduce((sum, r) => sum + r.durationMs, 0) / 60000);
+    const records = todayResults.filter(r => r.comparison && r.comparison.previousScore < r.score).length;
+    screen.innerHTML = `
+      <section class="hero-card">
+        <div class="hero-row">
+          <div>
+            <h2>${completed === plan.tasks.length ? 'Тренировка завершена' : 'Тренировка на сегодня'}</h2>
+            <p>${completed === plan.tasks.length ? `Сегодня ${todayMinutes || 1} мин. · новых рекордов: ${records}. Завтра план обновится.` : `${plan.tasks.length - completed} задания осталось. В плане есть новые задачи и возвращённые проверки памяти.`}</p>
+          </div>
+          <div class="progress-ring" style="--progress:${progress}"><strong>${completed}/${plan.tasks.length}</strong></div>
+        </div>
+      </section>
+      <div class="quick-stats">
+        <div class="quick-stat"><strong>${state.streak}</strong><span>дней подряд</span></div>
+        <div class="quick-stat"><strong>${todayMinutes || '—'}</strong><span>минут сегодня</span></div>
+        <div class="quick-stat"><strong>${records || '—'}</strong><span>новых рекордов</span></div>
+      </div>
+      <div class="section-head"><h2>План</h2><span>${completed}/${plan.tasks.length}</span></div>
+      <div class="task-list">${plan.tasks.map(taskCard).join('')}</div>
+      <div class="section-head"><h2>Как работает прогресс</h2></div>
+      <div class="info-banner">Каждое задание получает собственный скрытый номер. Через 5–10 дней приложение может вернуть точно ту же задачу и сравнить скорость, точность и количество ошибок.</div>`;
+  }
+
+  function taskCard(task) {
+    const meta = GAME_META[task.gameId];
+    const result = task.resultId ? state.results.find(r => r.id === task.resultId) : null;
+    return `<button class="task-card ${task.completed ? 'is-complete' : ''}" type="button" data-task-id="${escapeHtml(task.id)}">
+      <span class="task-icon" aria-hidden="true">${meta.icon}</span>
+      <span>
+        <h3>${meta.name}</h3>
+        <p>${task.completed && result ? `${result.score} баллов · ${formatDuration(result.durationMs)}` : describeChallenge(task)}</p>
+        ${task.isRepeat ? '<span class="repeat-badge">↻ Вернулась знакомая задача</span>' : ''}
+        <span class="challenge-number">№ ${challengeNumber(task.challengeId)}</span>
+      </span>
+      <span class="task-status" aria-hidden="true">${task.completed ? '✓' : '›'}</span>
+    </button>`;
+  }
+
+  function describeChallenge(task) {
+    const spec = task.spec;
+    if (task.gameId === 'grid') return `Запомнить ${spec.targets.length} клеток`;
+    if (task.gameId === 'pairs') return `${spec.symbols.length / 2} пар`;
+    if (task.gameId === 'sequence') return `Цепочка из ${spec.sequence.length} символов`;
+    if (task.gameId === 'sudoku') return `${difficultyLabel(spec.level)} уровень · ${spec.clues} открытых чисел`;
+    return GAME_META[task.gameId]?.description || '';
+  }
+
+  function renderGames() {
+    screen.innerHTML = `<div class="info-banner">Можно тренироваться свободно сколько угодно. В ежедневный прогресс засчитываются и свободные попытки.</div>
+      <div class="games-grid">${ACTIVE_GAMES.map(id => {
+        const meta = GAME_META[id];
+        const results = state.results.filter(r => r.gameId === id);
+        const best = results.length ? Math.max(...results.map(r => r.score)) : null;
+        return `<button class="game-card" type="button" data-game-id="${id}">
+          <span class="game-icon">${meta.icon}</span><h3>${meta.name}</h3><p>${meta.description}</p>
+          <span class="game-meta">${best ? `Лучший балл: ${best}` : 'Ещё не пройдено'}</span>
+        </button>`;
+      }).join('')}</div>`;
+  }
+
+  function renderProgress() {
+    const results = state.results;
+    const last7 = lastNDays(7).map(date => ({ date, count: results.filter(r => r.date === date).length }));
+    const maxDay = Math.max(1, ...last7.map(item => item.count));
+    const repeats = results.filter(r => r.isRepeat).length;
+    const averageAccuracy = results.length ? Math.round(results.reduce((sum, r) => sum + r.accuracy, 0) / results.length) : 0;
+    const recent = [...results].reverse().slice(0, 12);
+    screen.innerHTML = `
+      <div class="metrics-grid">
+        <div class="metric-card"><span>Всего тренировок</span><strong>${results.length}</strong><em>${results.length ? 'история сохраняется' : 'начни сегодня'}</em></div>
+        <div class="metric-card"><span>Средняя точность</span><strong>${averageAccuracy || '—'}${averageAccuracy ? '%' : ''}</strong><em>по всем режимам</em></div>
+        <div class="metric-card"><span>Возвращённых задач</span><strong>${repeats}</strong><em>проверок памяти</em></div>
+        <div class="metric-card"><span>Лучший результат</span><strong>${results.length ? Math.max(...results.map(r => r.score)) : '—'}</strong><em>баллов</em></div>
+      </div>
+      <div class="section-head"><h2>Последние 7 дней</h2></div>
+      <div class="chart-card"><div class="bar-chart">${last7.map(item => `<div class="bar-col"><div class="bar-track"><div class="bar" style="--height:${Math.max(4, item.count / maxDay * 100)}%"></div></div><span>${shortDay(item.date)}</span></div>`).join('')}</div></div>
+      <div class="section-head"><h2>История</h2><span>${recent.length}</span></div>
+      ${recent.length ? `<div class="timeline">${recent.map(result => {
+        const meta = GAME_META[result.gameId] || { name: result.gameId };
+        const repeatText = result.isRepeat ? ' · повтор знакомой задачи' : '';
+        const stats = result.gameId === 'sudoku' && result.stats ? ` · карандаш: ${result.stats.pencilMarks || 0} · отмен: ${result.stats.undos || 0}` : '';
+        return `<div class="timeline-item"><span class="timeline-dot"></span><div class="timeline-body"><h3>${meta.name} · № ${challengeNumber(result.challengeId)}</h3><p>${formatDateShort(result.date)} · ${result.score} баллов · ${result.accuracy}% · ${formatDuration(result.durationMs)}${repeatText}${stats}</p></div></div>`;
+      }).join('')}</div>` : '<div class="empty-state"><strong>История пока пуста</strong>Заверши первую тренировку — результат появится здесь.</div>'}`;
+  }
+
+  function renderProfile() {
+    const level = getPlayerLevel(state.xp);
+    const currentLevelXp = xpForLevel(level);
+    const nextLevelXp = xpForLevel(level + 1);
+    const levelProgress = Math.min(100, Math.round((state.xp - currentLevelXp) / Math.max(1, nextLevelXp - currentLevelXp) * 100));
+    const unlocked = new Set(state.unlockedAchievements);
+    screen.innerHTML = `
+      <section class="profile-card"><div class="profile-head"><div class="avatar">🧠</div><div><h2>Уровень ${level}</h2><p>${state.xp} опыта · до следующего ${Math.max(0, nextLevelXp - state.xp)}</p></div></div><div class="level-track"><div class="level-fill" style="--width:${levelProgress}%"></div></div></section>
+      <div class="section-head"><h2>Достижения</h2><span>${unlocked.size}/${ACHIEVEMENTS.length}</span></div>
+      <div class="achievement-grid">${ACHIEVEMENTS.map(a => `<div class="achievement ${unlocked.has(a.id) ? '' : 'is-locked'}"><span class="achievement-icon">${a.icon}</span><strong>${a.name}</strong></div>`).join('')}</div>
+      <div class="section-head"><h2>Настройки</h2></div>
+      <section class="profile-card">
+        <div class="profile-row"><span>Тёмная тема</span><button class="switch ${state.settings.theme === 'dark' ? 'is-on' : ''}" type="button" data-theme-toggle aria-label="Переключить тему"></button></div>
+        <div class="profile-row"><span>Версия</span><strong>1.3.0</strong></div>
