@@ -1,0 +1,297 @@
+        <div class="profile-row"><span>Данные</span><strong>Хранятся на этом устройстве</strong></div>
+        <div class="profile-row"><span>Офлайн</span><strong>После первого запуска</strong></div>
+        <div class="profile-row"><span>iPhone</span><strong>Safari → Поделиться → На экран «Домой»</strong></div>
+      </section>
+      <section class="profile-card"><div class="profile-row"><span>Начать с чистого листа</span><button class="danger-button" type="button" data-reset>Удалить прогресс</button></div></section>`;
+  }
+
+  function ensureDailyPlan() {
+    const date = todayKey();
+    if (state.dailyPlans[date]?.version === APP_VERSION) return;
+    const rng = mulberry32(hashString(`plan-${date}`));
+    const due = findDueRepeat();
+    const selected = [];
+    if (due && ACTIVE_GAMES.includes(due.gameId)) selected.push({ gameId: due.gameId, due });
+    const rotation = shuffle([...ACTIVE_GAMES], rng);
+    for (const gameId of rotation) {
+      if (!selected.some(item => item.gameId === gameId)) selected.push({ gameId });
+      if (selected.length === 3) break;
+    }
+    const tasks = selected.map((item, index) => {
+      if (item.due) {
+        return {
+          id: `${date}-repeat-${item.due.challengeId}`,
+          gameId: item.due.gameId,
+          challengeId: item.due.challengeId,
+          spec: item.due.challengeSpec,
+          isRepeat: true,
+          repeatSourceResultId: item.due.id,
+          completed: false,
+          source: 'daily'
+        };
+      }
+      const seed = hashString(`${date}-${item.gameId}-${index}`);
+      return {
+        id: `${date}-${item.gameId}-${index}`,
+        gameId: item.gameId,
+        challengeId: makeChallengeId(item.gameId, seed),
+        spec: makeChallenge(item.gameId, seed, getAdaptiveLevel(item.gameId)),
+        isRepeat: false,
+        completed: false,
+        source: 'daily'
+      };
+    });
+    state.dailyPlans[date] = { version: APP_VERSION, date, estimatedMinutes: 9, tasks };
+    saveState();
+  }
+
+  function getTodayPlan() { ensureDailyPlan(); return state.dailyPlans[todayKey()]; }
+
+  function findDueRepeat() {
+    const latestByChallenge = new Map();
+    for (const result of state.results) {
+      if (!result.challengeId || !result.challengeSpec || result.archived) continue;
+      const previous = latestByChallenge.get(result.challengeId);
+      if (!previous || new Date(result.createdAt || result.date) > new Date(previous.createdAt || previous.date)) latestByChallenge.set(result.challengeId, result);
+    }
+    const today = todayKey();
+    const due = [...latestByChallenge.values()].filter(result => {
+      const dueDate = result.reviewDueDate || addDaysKey(result.date, reviewDelayDays(result.challengeId, result.reviewCount || 0));
+      return dueDate <= today && dayDifference(result.date, today) >= 5;
+    });
+    if (!due.length) return null;
+    due.sort((a, b) => (a.reviewDueDate || '').localeCompare(b.reviewDueDate || '') || a.date.localeCompare(b.date));
+    return due[0];
+  }
+
+  function getAdaptiveLevel(gameId) {
+    const results = state.results.filter(r => r.gameId === gameId && !r.archived);
+    if (!results.length) return 1;
+    const last = results.slice(-4);
+    const avg = last.reduce((sum, r) => sum + r.accuracy, 0) / last.length;
+    const base = Math.min(7, 1 + Math.floor(results.length / 3));
+    return Math.max(1, Math.min(7, avg >= 86 ? base + 1 : avg < 60 ? base - 1 : base));
+  }
+
+  function makeChallenge(gameId, seed, level) {
+    const rng = mulberry32(seed);
+    if (gameId === 'grid') {
+      const cols = level >= 5 ? 5 : 4;
+      const total = cols * cols;
+      const count = Math.min(total - 4, 3 + Math.floor(level * .8));
+      return { seed, cols, targets: sampleIndices(total, count, rng), previewMs: Math.max(1000, 2300 - level * 130) };
+    }
+    if (gameId === 'pairs') {
+      const pairCount = Math.min(8, 3 + Math.floor(level / 2));
+      const chosen = shuffle([...SYMBOLS], rng).slice(0, pairCount);
+      return { seed, cols: pairCount <= 4 ? 3 : 4, symbols: shuffle([...chosen, ...chosen], rng), previewMs: Math.max(1700, 3400 - level * 160) };
+    }
+    if (gameId === 'sequence') {
+      const length = Math.min(10, 3 + level);
+      return { seed, sequence: Array.from({ length }, () => SEQUENCE_SYMBOLS[Math.floor(rng() * SEQUENCE_SYMBOLS.length)]), paceMs: Math.max(350, 720 - level * 40) };
+    }
+    if (gameId === 'sudoku') {
+      const generated = generateSudoku(seed, level);
+      return { seed, level, ...generated };
+    }
+    throw new Error(`Unknown game: ${gameId}`);
+  }
+
+  function makeChallengeId(gameId, seed) { return `${gameId}-${(seed >>> 0).toString(36)}`; }
+  function challengeNumber(challengeId) { return String(Math.abs(hashString(challengeId || 'unknown')) % 100000).padStart(5, '0'); }
+  function difficultyLabel(level) { return ['Лёгкий', 'Лёгкий', 'Средний', 'Средний', 'Сложный', 'Сложный', 'Эксперт'][Math.max(0, Math.min(6, level - 1))]; }
+
+  function generateSudoku(seed, level) {
+    const targetClues = [46, 44, 42, 39, 36, 33, 30][Math.max(0, Math.min(6, level - 1))];
+    const rng = mulberry32(seed ^ 0x9e3779b9);
+    const solution = makeSolvedGrid(rng);
+    const puzzle = [...solution];
+    const order = shuffle(Array.from({ length: 81 }, (_, i) => i), rng);
+    let clues = 81;
+    for (const index of order) {
+      if (clues <= targetClues) break;
+      const old = puzzle[index];
+      puzzle[index] = 0;
+      if (countSudokuSolutions(puzzle, 2) !== 1) puzzle[index] = old;
+      else clues -= 1;
+    }
+    return { puzzle, solution, clues };
+  }
+
+  function makeSolvedGrid(rng) {
+    const pattern = (row, col) => (row * 3 + Math.floor(row / 3) + col) % 9;
+    const bands = shuffle([0, 1, 2], rng);
+    const stacks = shuffle([0, 1, 2], rng);
+    const rows = bands.flatMap(band => shuffle([0, 1, 2], rng).map(row => band * 3 + row));
+    const cols = stacks.flatMap(stack => shuffle([0, 1, 2], rng).map(col => stack * 3 + col));
+    const digits = shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9], rng);
+    return rows.flatMap(row => cols.map(col => digits[pattern(row, col)]));
+  }
+
+  function countSudokuSolutions(board, limit = 2) {
+    const values = [...board];
+    let count = 0;
+    const rows = Array.from({ length: 9 }, () => new Set());
+    const cols = Array.from({ length: 9 }, () => new Set());
+    const boxes = Array.from({ length: 9 }, () => new Set());
+    for (let i = 0; i < 81; i++) {
+      const value = values[i];
+      if (!value) continue;
+      const r = Math.floor(i / 9), c = i % 9, b = Math.floor(r / 3) * 3 + Math.floor(c / 3);
+      if (rows[r].has(value) || cols[c].has(value) || boxes[b].has(value)) return 0;
+      rows[r].add(value); cols[c].add(value); boxes[b].add(value);
+    }
+    function search() {
+      if (count >= limit) return;
+      let best = -1;
+      let bestCandidates = null;
+      for (let i = 0; i < 81; i++) {
+        if (values[i]) continue;
+        const r = Math.floor(i / 9), c = i % 9, b = Math.floor(r / 3) * 3 + Math.floor(c / 3);
+        const candidates = [];
+        for (let n = 1; n <= 9; n++) if (!rows[r].has(n) && !cols[c].has(n) && !boxes[b].has(n)) candidates.push(n);
+        if (!candidates.length) return;
+        if (!bestCandidates || candidates.length < bestCandidates.length) {
+          best = i; bestCandidates = candidates;
+          if (candidates.length === 1) break;
+        }
+      }
+      if (best === -1) { count += 1; return; }
+      const r = Math.floor(best / 9), c = best % 9, b = Math.floor(r / 3) * 3 + Math.floor(c / 3);
+      for (const n of bestCandidates) {
+        values[best] = n; rows[r].add(n); cols[c].add(n); boxes[b].add(n);
+        search();
+        values[best] = 0; rows[r].delete(n); cols[c].delete(n); boxes[b].delete(n);
+        if (count >= limit) return;
+      }
+    }
+    search();
+    return count;
+  }
+
+  function openGame(gameId, task) {
+    const meta = GAME_META[gameId];
+    activeGame = {
+      gameId,
+      task,
+      spec: task.spec,
+      startTime: null,
+      mistakes: 0,
+      score: 0,
+      accuracy: 0,
+      cleanup: null,
+      actions: [],
+      stats: {}
+    };
+    modalRoot.innerHTML = `<div class="game-backdrop">
+      <section class="game-modal ${gameId === 'sudoku' ? 'is-sudoku' : ''}" role="dialog" aria-modal="true" aria-label="${meta.name}">
+        <header class="game-header"><button class="icon-button" type="button" data-close-game aria-label="Закрыть">×</button><h2>${meta.name}</h2><span></span></header>
+        <div class="game-stage" id="gameStage">
+          <div class="game-intro"><div class="big-icon" aria-hidden="true">${meta.icon}</div><h3>${task.isRepeat ? 'Знакомая задача вернулась' : meta.skill}</h3><p>${task.isRepeat ? `Ты уже решал задачу № ${challengeNumber(task.challengeId)}. Сейчас сравним новый результат с прошлым.` : meta.description}</p><button class="primary-button" type="button" data-start-game>Начать</button></div>
+        </div>
+      </section></div>`;
+    modalRoot.querySelector('[data-close-game]').addEventListener('click', closeGame);
+    modalRoot.querySelector('[data-start-game]').addEventListener('click', startActiveGame);
+  }
+
+  function closeGame() {
+    if (activeGame?.cleanup) activeGame.cleanup();
+    clearInterval(timerInterval);
+    modalRoot.innerHTML = '';
+    activeGame = null;
+  }
+
+  function startActiveGame() {
+    if (!activeGame) return;
+    activeGame.startTime = performance.now();
+    if (activeGame.gameId === 'grid') startGridGame();
+    if (activeGame.gameId === 'pairs') startPairsGame();
+    if (activeGame.gameId === 'sequence') startSequenceGame();
+    if (activeGame.gameId === 'sudoku') startSudokuGame();
+  }
+
+  function getGameStage() { return document.getElementById('gameStage'); }
+
+  function basePlayLayout(label, value, content, instruction = '') {
+    return `<div class="game-play">
+      <div class="game-hud"><div class="hud-chip"><span>${label}</span><strong data-primary>${value}</strong></div><div class="hud-chip"><span>Время</span><strong data-time>0:00</strong></div></div>
+      <p class="instruction">${instruction}</p>
+      <div class="game-board-area">${content}</div>
+      <div></div>
+    </div>`;
+  }
+
+  function startGridGame() {
+    const { cols, targets, previewMs } = activeGame.spec;
+    const stage = getGameStage();
+    let selected = [];
+    let canTap = false;
+    const cells = Array.from({ length: cols * cols }, (_, i) => `<button class="memory-cell ${targets.includes(i) ? 'is-lit' : ''}" data-cell="${i}" type="button" aria-label="Клетка ${i + 1}"></button>`).join('');
+    stage.innerHTML = basePlayLayout('Цель', targets.length, `<div class="memory-grid" style="--cols:${cols}">${cells}</div>`, 'Запомни клетки');
+    startHudTimer();
+    const timeout = setTimeout(() => {
+      stage.querySelectorAll('.memory-cell').forEach(cell => cell.classList.remove('is-lit'));
+      stage.querySelector('.instruction').textContent = `Выбери ${targets.length} клеток`;
+      canTap = true;
+    }, previewMs);
+    const click = event => {
+      const cell = event.target.closest('[data-cell]');
+      if (!cell || !canTap) return;
+      const index = Number(cell.dataset.cell);
+      activeGame.actions.push({ t: elapsedMs(), type: 'tap', cell: index });
+      if (selected.includes(index)) {
+        selected = selected.filter(v => v !== index);
+        cell.classList.remove('is-selected');
+      } else if (selected.length < targets.length) {
+        selected.push(index);
+        cell.classList.add('is-selected');
+      }
+      if (selected.length === targets.length) {
+        canTap = false;
+        const correct = selected.filter(v => targets.includes(v)).length;
+        const mistakes = targets.length - correct;
+        stage.querySelectorAll('.memory-cell').forEach((node, i) => {
+          if (targets.includes(i)) node.classList.add('is-correct');
+          else if (selected.includes(i)) node.classList.add('is-wrong');
+        });
+        activeGame.mistakes = mistakes;
+        activeGame.accuracy = Math.round(correct / targets.length * 100);
+        activeGame.score = Math.max(100, Math.round(520 + targets.length * 105 - elapsedSeconds() * 8 - mistakes * 90));
+        setTimeout(finishActiveGame, 750);
+      }
+    };
+    stage.addEventListener('click', click);
+    activeGame.cleanup = () => { clearTimeout(timeout); stage.removeEventListener('click', click); };
+  }
+
+  function startPairsGame() {
+    const { symbols, cols, previewMs } = activeGame.spec;
+    const stage = getGameStage();
+    let open = [];
+    const matched = new Set();
+    let canTap = false;
+    let moves = 0;
+    const cards = symbols.map((symbol, i) => `<button class="pair-card is-open" data-card="${i}" type="button"><span>${symbol}</span></button>`).join('');
+    stage.innerHTML = basePlayLayout('Ходы', 0, `<div class="pairs-grid" style="--cols:${cols}">${cards}</div>`, 'Запомни расположение');
+    startHudTimer();
+    const timeout = setTimeout(() => {
+      stage.querySelectorAll('.pair-card').forEach(card => card.classList.remove('is-open'));
+      stage.querySelector('.instruction').textContent = 'Открой все пары';
+      canTap = true;
+    }, previewMs);
+    const click = event => {
+      const card = event.target.closest('[data-card]');
+      if (!card || !canTap) return;
+      const index = Number(card.dataset.card);
+      if (matched.has(index) || open.includes(index)) return;
+      activeGame.actions.push({ t: elapsedMs(), type: 'flip', card: index });
+      card.classList.add('is-open');
+      open.push(index);
+      if (open.length === 2) {
+        moves += 1;
+        updateHudPrimary(moves);
+        canTap = false;
+        const [a, b] = open;
+        if (symbols[a] === symbols[b]) {
+          matched.add(a); matched.add(b);
+          stage.querySelector(`[data-card="${a}"]`).classList.add('is-matched');
