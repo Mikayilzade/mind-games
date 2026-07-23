@@ -1,15 +1,15 @@
-const CACHE = 'mind-games-v2';
+const CACHE = 'mind-games-v3';
 const ASSETS = [
   './',
   './index.html',
-  './styles.css?v=1.1.0',
-  './fixes-v2.css?v=1.1.0',
-  './app-v2-loader.js?v=1.1.0',
-  './app-v2.part-1.txt?v=1.1.0',
-  './app-v2.part-2.txt?v=1.1.0',
-  './app-v2.part-3.txt?v=1.1.0',
-  './app-v2.part-4.txt?v=1.1.0',
-  './app-v2.part-5.txt?v=1.1.0',
+  './styles.css?v=1.2.0',
+  './fixes-v2.css?v=1.2.0',
+  './app-v2-loader.js?v=1.2.0',
+  './app-v2.part-1.txt?v=1.2.0',
+  './app-v2.part-2.txt?v=1.2.0',
+  './app-v2.part-3.txt?v=1.2.0',
+  './app-v2.part-4.txt?v=1.2.0',
+  './app-v2.part-5.txt?v=1.2.0',
   './manifest.webmanifest',
   './icons/icon.svg',
   './icons/apple-touch-icon.svg'
@@ -46,16 +46,12 @@ self.addEventListener('fetch', event => {
   }
 
   event.respondWith(
-    caches.match(event.request).then(cached => {
-      const network = fetch(event.request)
-        .then(response => {
-          const copy = response.clone();
-          caches.open(CACHE).then(cache => cache.put(event.request, copy));
-          return response;
-        })
-        .catch(() => cached);
-
-      return cached || network;
-    })
+    fetch(event.request)
+      .then(response => {
+        const copy = response.clone();
+        caches.open(CACHE).then(cache => cache.put(event.request, copy));
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });

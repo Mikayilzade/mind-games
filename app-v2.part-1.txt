@@ -1,315 +1,263 @@
 (() => {
-'use strict';
+  'use strict';
 
-const STORAGE_KEY = 'mind-games-state-v1';
-const APP_VERSION = 2;
-const SCHEMA_VERSION = 2;
+  const STORAGE_KEY = 'mind-games-state-v1';
+  const APP_VERSION = 3;
+  const ACTIVE_GAMES = ['grid', 'pairs', 'sequence', 'sudoku'];
+  const GAME_META = {
+    grid: {
+      name: 'Вспышка', icon: '✦', skill: 'Зрительная память',
+      description: 'Запомни подсвеченные клетки и восстанови рисунок.'
+    },
+    pairs: {
+      name: 'Пары', icon: '◫', skill: 'Память и скорость',
+      description: 'Запомни расположение символов и открой все пары.'
+    },
+    sequence: {
+      name: 'Цепочка', icon: '➜', skill: 'Рабочая память',
+      description: 'Запомни порядок символов и повтори его без ошибки.'
+    },
+    sudoku: {
+      name: 'Судоку 9×9', icon: '▦', skill: 'Логика и концентрация',
+      description: 'Полноценное судоку: размер всегда 9×9, а сложность меняется количеством подсказок.'
+    }
+  };
+  const ARCHIVE_META = {
+    chess: { name: 'Шахматная задача', icon: '♞', skill: 'Архив' }
+  };
+  const SYMBOLS = ['●', '▲', '■', '◆', '★', '✿', '☂', '☀', '☾', '♬', '⚑', '⬟'];
+  const SEQUENCE_SYMBOLS = ['●', '▲', '■', '◆', '★', '✿'];
+  const ACHIEVEMENTS = [
+    { id:'first', icon:'🌱', name:'Первый шаг', test:s => s.results.length >= 1 },
+    { id:'five', icon:'🧠', name:'5 тренировок', test:s => s.results.length >= 5 },
+    { id:'streak3', icon:'🔥', name:'Серия 3 дня', test:s => s.bestStreak >= 3 },
+    { id:'streak7', icon:'⚡', name:'Неделя силы', test:s => s.bestStreak >= 7 },
+    { id:'perfect', icon:'💎', name:'Без ошибки', test:s => s.results.some(r => r.accuracy === 100) },
+    { id:'speed', icon:'⏱️', name:'Быстрее себя', test:s => hasImprovement(s, 20) },
+    { id:'repeat', icon:'↻', name:'Память жива', test:s => s.results.some(r => r.isRepeat) },
+    { id:'allgames', icon:'🏅', name:'Все режимы', test:s => ACTIVE_GAMES.every(id => s.results.some(r => r.gameId === id)) },
+    { id:'level5', icon:'🚀', name:'Уровень 5', test:s => getPlayerLevel(s.xp) >= 5 }
+  ];
 
-const GAME_META = {
-grid: {
-name: 'Вспышка',
-icon: '✦',
-skill: 'Зрительная память',
-description: 'Запомни подсвеченные клетки и восстанови рисунок.'
-},
-pairs: {
-name: 'Пары',
-icon: '◫',
-skill: 'Память и скорость',
-description: 'Запомни расположение символов и открой все пары.'
-},
-sequence: {
-name: 'Цепочка',
-icon: '➜',
-skill: 'Рабочая память',
-description: 'Запомни порядок символов и повтори его без ошибки.'
-},
-sudoku: {
-name: 'Судоку',
-icon: '▦',
-skill: 'Логика и концентрация',
-description: 'Заполняй клетки так, чтобы число не повторялось в строке, колонке и выделенном блоке.'
-},
-chess: {
-name: 'Шахматная задача',
-icon: '♞',
-skill: 'Логика и шаблоны',
-description: 'Найди лучший ход по понятной цели. Через 30 секунд можно открыть подсказку.'
-}
-};
+  const screen = document.getElementById('screen');
+  const screenTitle = document.getElementById('screenTitle');
+  const todayLabel = document.getElementById('todayLabel');
+  const streakValue = document.getElementById('streakValue');
+  const modalRoot = document.getElementById('modalRoot');
+  const toast = document.getElementById('toast');
 
-const SYMBOLS = ['●', '▲', '■', '◆', '★', '✿', '☂', '☀', '☾', '♬', '⚑', '⬟'];
-const SEQUENCE_SYMBOLS = ['●', '▲', '■', '◆', '★', '✿'];
+  let state = loadState();
+  let route = 'today';
+  let activeGame = null;
+  let timerInterval = null;
+  let toastTimer = null;
 
-const SUDOKU_LIBRARY = {
-4: {
-blockRows: 2,
-blockCols: 2,
-puzzle: [
-1,0,0,4,
-0,4,1,0,
-0,1,4,0,
-4,0,0,1
-],
-solution: [
-1,2,3,4,
-3,4,1,2,
-2,1,4,3,
-4,3,2,1
-]
-},
-6: {
-blockRows: 2,
-blockCols: 3,
-puzzle: [
-1,0,0,4,0,6,
-0,5,6,0,2,0,
-2,0,4,5,0,1,
-0,6,0,2,3,0,
-3,0,5,0,1,2,
-0,1,0,3,0,5
-],
-solution: [
-1,2,3,4,5,6,
-4,5,6,1,2,3,
-2,3,4,5,6,1,
-5,6,1,2,3,4,
-3,4,5,6,1,2,
-6,1,2,3,4,5
-]
-},
-9: {
-blockRows: 3,
-blockCols: 3,
-puzzle: [
-1,0,0,4,0,6,0,8,0,
-0,5,6,0,8,0,1,0,3,
-7,0,9,1,0,3,0,5,0,
-0,3,0,5,6,0,8,0,1,
-5,0,7,0,9,1,0,3,0,
-0,9,1,2,0,4,5,0,7,
-3,0,5,0,7,8,0,1,0,
-0,7,0,9,1,0,3,0,5,
-9,0,2,0,4,5,0,7,8
-],
-solution: [
-1,2,3,4,5,6,7,8,9,
-4,5,6,7,8,9,1,2,3,
-7,8,9,1,2,3,4,5,6,
-2,3,4,5,6,7,8,9,1,
-5,6,7,8,9,1,2,3,4,
-8,9,1,2,3,4,5,6,7,
-3,4,5,6,7,8,9,1,2,
-6,7,8,9,1,2,3,4,5,
-9,1,2,3,4,5,6,7,8
-]
-}
-};
+  init();
 
-const CHESS_PUZZLES = [
-{
-id: 'back-rank-mate',
-motif: 'Мат по последней горизонтали',
-goal: 'Поставь мат в один ход',
-side: 'Белые ходят',
-pieces: {
-g1: ['♔','white'],
-e1: ['♖','white'],
-g8: ['♚','black'],
-f7: ['♟','black'],
-g7: ['♟','black'],
-h7: ['♟','black'],
-a8: ['♜','black']
-},
-from: 'e1',
-to: 'e8',
-move: 'Ладья e1 → e8',
-hint: 'Ищи вторжение ладьи на восьмую горизонталь: собственные пешки заперли чёрного короля.',
-explanation: 'Ладья на e8 даёт шах по восьмой горизонтали. Поля f8 и h8 тоже контролируются ладьёй, а вниз королю мешают собственные пешки.'
-},
-{
-id: 'knight-fork',
-motif: 'Двойной удар',
-goal: 'Дай шах и одновременно напади на ферзя',
-side: 'Белые ходят',
-pieces: {
-g1: ['♔','white'],
-e5: ['♘','white'],
-h8: ['♚','black'],
-d8: ['♛','black'],
-g7: ['♟','black'],
-h7: ['♟','black']
-},
-from: 'e5',
-to: 'f7',
-move: 'Конь e5 → f7',
-hint: 'Найди поле, с которого конь одновременно атакует h8 и d8.',
-explanation: 'Конь на f7 даёт шах королю h8 и одновременно атакует ферзя d8. После ответа на шах белые заберут ферзя.'
-},
-{
-id: 'bishop-pin',
-motif: 'Связка',
-goal: 'Свяжи коня с более ценной фигурой',
-side: 'Белые ходят',
-pieces: {
-g1: ['♔','white'],
-c1: ['♗','white'],
-g8: ['♚','black'],
-d8: ['♛','black'],
-f6: ['♞','black'],
-g7: ['♟','black'],
-h7: ['♟','black']
-},
-from: 'c1',
-to: 'g5',
-move: 'Слон c1 → g5',
-hint: 'Проведи слона на диагональ, где за конём окажется чёрный ферзь.',
-explanation: 'После Сg5 конь f6 оказывается между слоном и ферзём d8. Уход коня откроет нападение на ферзя — это относительная связка.'
-},
-{
-id: 'rook-line',
-motif: 'Линейный удар',
-goal: 'Выиграй ферзя одним прямым ходом',
-side: 'Белые ходят',
-pieces: {
-g1: ['♔','white'],
-a1: ['♖','white'],
-g8: ['♚','black'],
-a8: ['♛','black'],
-f7: ['♟','black'],
-g7: ['♟','black']
-},
-from: 'a1',
-to: 'a8',
-move: 'Ладья a1 → a8',
-hint: 'Проверь открытую вертикаль a от ладьи до чёрного ферзя.',
-explanation: 'На вертикали a между ладьёй и ферзём нет фигур. Ладья проходит по прямой и забирает ферзя.'
-}
-];
+  function init() {
+    state = normalizeState(state);
+    migrateState();
+    ensureDailyPlan();
+    bindGlobalEvents();
+    render();
+    registerServiceWorker();
+  }
 
-const ACHIEVEMENTS = [
-{ id:'first', icon:'🌱', name:'Первый шаг', test:s => s.results.length >= 1 },
-{ id:'five', icon:'🧠', name:'5 тренировок', test:s => s.results.length >= 5 },
-{ id:'streak3', icon:'🔥', name:'Серия 3 дня', test:s => s.bestStreak >= 3 },
-{ id:'streak7', icon:'⚡', name:'Неделя силы', test:s => s.bestStreak >= 7 },
-{ id:'perfect', icon:'💎', name:'Без ошибки', test:s => s.results.some(r => r.accuracy === 100) },
-{ id:'speed', icon:'⏱️', name:'Быстрее себя', test:s => hasImprovement(s, 20) },
-{ id:'repeat', icon:'↻', name:'Память жива', test:s => s.results.some(r => r.isRepeat) },
-{ id:'allgames', icon:'🏅', name:'Все режимы', test:s => Object.keys(GAME_META).every(id => s.results.some(r => r.gameId === id)) },
-{ id:'sudoku6', icon:'🔢', name:'Судоку 6×6', test:s => s.results.some(r => r.gameId === 'sudoku' && r.challengeSpec?.size >= 6) },
-{ id:'level5', icon:'🚀', name:'Уровень 5', test:s => playerLevel(s.xp) >= 5 }
-];
+  function defaultState() {
+    return {
+      version: APP_VERSION,
+      createdAt: new Date().toISOString(),
+      xp: 0,
+      streak: 0,
+      bestStreak: 0,
+      lastTrainingDate: null,
+      results: [],
+      dailyPlans: {},
+      unlockedAchievements: []
+    };
+  }
 
-const screen = document.getElementById('screen');
-const screenTitle = document.getElementById('screenTitle');
-const todayLabel = document.getElementById('todayLabel');
-const streakValue = document.getElementById('streakValue');
-const modalRoot = document.getElementById('modalRoot');
-const toast = document.getElementById('toast');
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : defaultState();
+    } catch {
+      return defaultState();
+    }
+  }
 
-let state = normalizeState(loadState());
-let route = 'today';
-let activeGame = null;
-let timerInterval = null;
-let hintInterval = null;
-let toastTimer = null;
+  function normalizeState(input) {
+    const base = defaultState();
+    return {
+      ...base,
+      ...(input || {}),
+      results: Array.isArray(input?.results) ? input.results : [],
+      dailyPlans: input?.dailyPlans && typeof input.dailyPlans === 'object' ? input.dailyPlans : {},
+      unlockedAchievements: Array.isArray(input?.unlockedAchievements) ? input.unlockedAchievements : []
+    };
+  }
 
-init();
+  function migrateState() {
+    if (Number(state.version || 0) >= APP_VERSION) return;
+    state.version = APP_VERSION;
+    const today = todayKey();
+    const todayPlan = state.dailyPlans[today];
+    if (todayPlan && todayPlan.tasks?.some(task => task.gameId === 'chess' || isLegacySudokuTask(task))) {
+      delete state.dailyPlans[today];
+    }
+    for (const plan of Object.values(state.dailyPlans)) {
+      if (!Array.isArray(plan?.tasks)) continue;
+      plan.tasks = plan.tasks.filter(task => ACTIVE_GAMES.includes(task.gameId) && !isLegacySudokuTask(task));
+    }
+    saveState();
+  }
 
-function init() {
-ensureDailyPlan();
-bindGlobalEvents();
-updateStreakDisplay();
-render();
+  function isLegacySudokuTask(task) {
+    return task?.gameId === 'sudoku' && Number(task?.spec?.size || 0) !== 9;
+  }
 
-if ('serviceWorker' in navigator) {
-window.addEventListener('load', () => {
-navigator.serviceWorker.register('./service-worker.js').catch(() => {});
-});
-}
-}
+  function saveState() {
+    pruneOldPlans();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
 
-function defaultState() {
-return {
-version: APP_VERSION,
-createdAt: new Date().toISOString(),
-xp: 0,
-streak: 0,
-bestStreak: 0,
-lastTrainingDate: null,
-results: [],
-dailyPlans: {},
-unlockedAchievements: []
-};
-}
+  function pruneOldPlans() {
+    const keys = Object.keys(state.dailyPlans).sort().reverse();
+    keys.slice(60).forEach(key => delete state.dailyPlans[key]);
+  }
 
-function loadState() {
-try {
-const raw = localStorage.getItem(STORAGE_KEY);
-return raw ? JSON.parse(raw) : defaultState();
-} catch {
-return defaultState();
-}
-}
+  function registerServiceWorker() {
+    if (!('serviceWorker' in navigator)) return;
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./service-worker.js').catch(() => {});
+    });
+  }
 
-function normalizeState(input) {
-const normalized = {
-...defaultState(),
-...(input || {}),
-results: Array.isArray(input?.results) ? input.results : [],
-dailyPlans: input?.dailyPlans || {},
-unlockedAchievements: Array.isArray(input?.unlockedAchievements) ? input.unlockedAchievements : []
-};
+  function bindGlobalEvents() {
+    document.querySelector('.bottom-nav')?.addEventListener('click', event => {
+      const button = event.target.closest('[data-route]');
+      if (!button) return;
+      route = button.dataset.route;
+      render();
+    });
+    document.getElementById('streakButton')?.addEventListener('click', () => {
+      route = 'progress';
+      render();
+    });
+    screen?.addEventListener('click', handleScreenClick);
+  }
 
-if ((input?.version || 1) < APP_VERSION) {
-normalized.version = APP_VERSION;
-normalized.dailyPlans = {};
-}
+  function handleScreenClick(event) {
+    const taskNode = event.target.closest('[data-task-id]');
+    if (taskNode) {
+      const task = getTodayPlan().tasks.find(item => item.id === taskNode.dataset.taskId);
+      if (task) openGame(task.gameId, task);
+      return;
+    }
 
-return normalized;
-}
+    const gameNode = event.target.closest('[data-game-id]');
+    if (gameNode) {
+      const gameId = gameNode.dataset.gameId;
+      if (!ACTIVE_GAMES.includes(gameId)) return;
+      const seed = hashString(`${todayKey()}-${gameId}-${Date.now()}`);
+      const task = {
+        id: `free-${Date.now()}`,
+        gameId,
+        challengeId: `free-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+        spec: makeChallenge(gameId, seed, getAdaptiveLevel(gameId)),
+        isRepeat: false,
+        completed: false,
+        source: 'free'
+      };
+      openGame(gameId, task);
+      return;
+    }
 
-function saveState() {
-const keys = Object.keys(state.dailyPlans).sort().reverse();
-keys.slice(45).forEach(key => delete state.dailyPlans[key]);
-localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
+    if (event.target.closest('[data-reset]')) {
+      if (window.confirm('Удалить весь прогресс и начать заново? Это действие нельзя отменить.')) {
+        state = defaultState();
+        ensureDailyPlan();
+        saveState();
+        render();
+        showToast('Прогресс очищен');
+      }
+    }
+  }
 
-function bindGlobalEvents() {
-document.querySelector('.bottom-nav').addEventListener('click', event => {
-const button = event.target.closest('[data-route]');
-if (!button) return;
-route = button.dataset.route;
-render();
-});
+  function render() {
+    document.querySelectorAll('.nav-item').forEach(item => {
+      item.classList.toggle('is-active', item.dataset.route === route);
+    });
+    updateStreakDisplay();
+    const titles = { today:'Тренировка', games:'Все игры', progress:'Мой прогресс', profile:'Профиль' };
+    screenTitle.textContent = titles[route] || 'Mind Games';
+    todayLabel.textContent = formatDateLong(new Date());
+    if (route === 'today') renderToday();
+    if (route === 'games') renderGames();
+    if (route === 'progress') renderProgress();
+    if (route === 'profile') renderProfile();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
 
-document.getElementById('streakButton').addEventListener('click', () => {
-route = 'progress';
-render();
-});
+  function renderToday() {
+    const plan = getTodayPlan();
+    const completed = plan.tasks.filter(task => task.completed).length;
+    const progress = plan.tasks.length ? Math.round(completed / plan.tasks.length * 100) : 0;
+    const todayResults = state.results.filter(r => r.date === todayKey());
+    const todayMinutes = Math.round(todayResults.reduce((sum, r) => sum + Number(r.durationMs || 0), 0) / 60000);
+    const bestToday = todayResults.length ? Math.max(...todayResults.map(r => Number(r.score || 0))) : 0;
 
-screen.addEventListener('click', event => {
-const taskNode = event.target.closest('[data-task-id]');
-if (taskNode) {
-const task = getTodayPlan().tasks.find(item => item.id === taskNode.dataset.taskId);
-if (task) openGame(task.gameId, task);
-return;
-}
+    screen.innerHTML = `
+      <section class="hero-card">
+        <div class="hero-row">
+          <div>
+            <h2>${completed === plan.tasks.length ? 'Тренировка завершена' : 'Разбуди свой мозг'}</h2>
+            <p>${completed === plan.tasks.length
+              ? 'Сегодня всё выполнено. Завтра задания обновятся, а старые упражнения иногда вернутся для проверки памяти.'
+              : `Сегодня ${plan.tasks.length} коротких задания — примерно ${plan.estimatedMinutes} минут.`}</p>
+          </div>
+          <div class="progress-ring" style="--progress:${progress}"><strong>${completed}/${plan.tasks.length}</strong></div>
+        </div>
+      </section>
 
-const gameNode = event.target.closest('[data-game-id]');
-if (gameNode) {
-const gameId = gameNode.dataset.gameId;
-const seed = hashString(`${todayKey()}-${gameId}-${Date.now()}`);
-const spec = makeChallenge(gameId, seed, adaptiveLevel(gameId));
-openGame(gameId, {
-id: `free-${Date.now()}`,
-gameId,
-challengeId: `free-${Date.now()}`,
-spec,
-isRepeat: false,
-completed: false,
-source: 'free'
-});
-return;
-}
+      <div class="quick-stats">
+        <div class="quick-stat"><strong>${state.streak}</strong><span>дней подряд</span></div>
+        <div class="quick-stat"><strong>${todayMinutes || '—'}</strong><span>минут сегодня</span></div>
+        <div class="quick-stat"><strong>${bestToday || '—'}</strong><span>лучший балл</span></div>
+      </div>
 
+      <div class="section-head"><h2>План на сегодня</h2><span>${completed}/${plan.tasks.length}</span></div>
+      <div class="task-list">${plan.tasks.map(taskCard).join('')}</div>
+
+      <div class="section-head"><h2>Как измеряется прогресс?</h2></div>
+      <div class="info-banner">Новые задания проверяют общий навык. Знакомые задания возвращаются через несколько дней и показывают, насколько лучше сохранилась информация и выросла скорость.</div>
+    `;
+  }
+
+  function taskCard(task) {
+    const meta = GAME_META[task.gameId];
+    const result = task.resultId ? state.results.find(r => r.id === task.resultId) : null;
+    return `
+      <button class="task-card ${task.completed ? 'is-complete' : ''}" type="button" data-task-id="${task.id}">
+        <span class="task-icon" aria-hidden="true">${meta.icon}</span>
+        <span>
+          <h3>${meta.name}</h3>
+          <p>${task.completed && result ? `${result.score} баллов · ${formatDuration(result.durationMs)}` : describeChallenge(task)}</p>
+          ${task.isRepeat ? '<span class="repeat-badge">↻ Проверка памяти</span>' : ''}
+        </span>
+        <span class="task-status" aria-hidden="true">${task.completed ? '✓' : '›'}</span>
+      </button>`;
+  }
+
+  function describeChallenge(task) {
+    const spec = task.spec;
+    if (task.gameId === 'grid') return `Запомнить ${spec.targets.length} клеток`;
+    if (task.gameId === 'pairs') return `${spec.symbols.length / 2} пар`;
+    if (task.gameId === 'sequence') return `Цепочка из ${spec.sequence.length} символов`;
+    if (task.gameId === 'sudoku') return `${sudokuDifficultyLabel(spec.givens)} · открыто ${spec.givens} чисел`;
+    return 'Короткое упражнение';
+  }
+
+  function renderGames() {
+    screen.innerHTML = `
+      <div class="info-banner">Четыре режима работают как единая программа: память, рабочая память, скорость и логика. Сложность каждого режима растёт отдельно.</div>

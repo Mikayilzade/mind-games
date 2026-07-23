@@ -1,10 +1,10 @@
 (() => {
   const PARTS = [
-    './app-v2.part-1.txt?v=1.1.0',
-    './app-v2.part-2.txt?v=1.1.0',
-    './app-v2.part-3.txt?v=1.1.0',
-    './app-v2.part-4.txt?v=1.1.0',
-    './app-v2.part-5.txt?v=1.1.0'
+    './app-v2.part-1.txt?v=1.2.0',
+    './app-v2.part-2.txt?v=1.2.0',
+    './app-v2.part-3.txt?v=1.2.0',
+    './app-v2.part-4.txt?v=1.2.0',
+    './app-v2.part-5.txt?v=1.2.0'
   ];
 
   const screen = document.getElementById('screen');

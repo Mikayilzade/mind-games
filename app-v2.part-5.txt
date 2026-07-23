@@ -1,313 +1,306 @@
-}
-}
+      let bestIndex = -1;
+      let bestCandidates = null;
+      for (let index = 0; index < 81; index += 1) {
+        if (values[index] !== 0) continue;
+        const candidates = getCandidates(values, index);
+        if (!candidates.length) return;
+        if (!bestCandidates || candidates.length < bestCandidates.length) {
+          bestIndex = index;
+          bestCandidates = candidates;
+          if (candidates.length === 1) break;
+        }
+      }
+      if (bestIndex < 0) {
+        count += 1;
+        return;
+      }
+      for (const value of bestCandidates) {
+        values[bestIndex] = value;
+        solve();
+        values[bestIndex] = 0;
+        if (count >= limit) return;
+      }
+    }
 
-return squares.join('');
-}
+    solve();
+    return count;
+  }
 
-function pieceName(symbol) {
-const names = {
-'♔': 'Король',
-'♕': 'Ферзь',
-'♖': 'Ладья',
-'♗': 'Слон',
-'♘': 'Конь',
-'♙': 'Пешка',
-'♚': 'Король',
-'♛': 'Ферзь',
-'♜': 'Ладья',
-'♝': 'Слон',
-'♞': 'Конь',
-'♟': 'Пешка'
-};
-return names[symbol] || 'Фигура';
-}
+  function sudokuDifficultyLabel(givens) {
+    if (givens >= 44) return 'Лёгкий уровень';
+    if (givens >= 38) return 'Средний уровень';
+    if (givens >= 33) return 'Сложный уровень';
+    return 'Экспертный уровень';
+  }
 
-function startHintCountdown(stage) {
-clearInterval(hintInterval);
-const button = stage.querySelector('[data-hint]');
-if (!button) return;
+  function gameLayout(instruction, target, content, className, cols) {
+    return `
+      <div class="game-hud"><div class="hud-chip"><span>${className === 'pairs-grid' ? 'Ходы' : 'Цель'}</span><strong data-${className === 'pairs-grid' ? 'moves' : 'target'}>${className === 'pairs-grid' ? 0 : target}</strong></div><div class="hud-chip"><span>Время</span><strong data-time>0:00</strong></div></div>
+      <p class="instruction">${instruction}</p>
+      <div class="${className}" style="--cols:${cols}">${content}</div>`;
+  }
 
-const update = () => {
-if (!activeGame?.startTime || !button.isConnected) return;
-const remaining = Math.max(0, 30 - Math.floor(elapsedSeconds()));
-if (remaining <= 0) {
-button.disabled = false;
-button.textContent = 'Показать подсказку';
-clearInterval(hintInterval);
-} else {
-button.textContent = `Подсказка через 0:${String(remaining).padStart(2, '0')}`;
-}
-};
+  function startHudTimer() {
+    clearInterval(timerInterval);
+    timerInterval = setInterval(() => {
+      const node = modalRoot.querySelector('[data-time]');
+      if (node && activeGame?.startTime) node.textContent = formatDuration(performance.now() - activeGame.startTime);
+    }, 200);
+  }
 
-update();
-hintInterval = setInterval(update, 500);
-}
+  function updateHudValue(key, value) {
+    const node = modalRoot.querySelector(`[data-${key}]`);
+    if (node) node.textContent = value;
+  }
 
-function gameLayout(instruction, target, content, className, cols) {
-const isPairs = className === 'pairs-grid';
-return `
-<div class="game-hud">
-<div class="hud-chip"><span>${isPairs ? 'Ходы' : 'Цель'}</span><strong data-${isPairs ? 'moves' : 'target'}>${isPairs ? 0 : target}</strong></div>
-<div class="hud-chip"><span>Время</span><strong data-time>0:00</strong></div>
-</div>
-<p class="instruction">${instruction}</p>
-<div class="${className}" style="--cols:${cols}">${content}</div>
-`;
-}
+  function getGameStage() {
+    return document.getElementById('gameStage');
+  }
 
-function startHudTimer() {
-clearInterval(timerInterval);
-timerInterval = setInterval(() => {
-const node = modalRoot.querySelector('[data-time]');
-if (node && activeGame?.startTime) {
-node.textContent = formatDuration(performance.now() - activeGame.startTime);
-}
-}, 200);
-}
+  function elapsedSeconds() {
+    return activeGame?.startTime ? (performance.now() - activeGame.startTime) / 1000 : 0;
+  }
 
-function updateHudValue(key, value) {
-const node = modalRoot.querySelector(`[data-${key}]`);
-if (node) node.textContent = value;
-}
+  function finishActiveGame() {
+    if (!activeGame) return;
+    clearInterval(timerInterval);
+    if (activeGame.cleanup) activeGame.cleanup();
 
-function finishActiveGame() {
-if (!activeGame) return;
+    const durationMs = Math.max(1000, performance.now() - activeGame.startTime);
+    const task = activeGame.task;
+    const previous = [...state.results].reverse().find(result => result.challengeId === task.challengeId);
+    const xpEarned = Math.max(12, Math.round(20 + activeGame.accuracy * 0.35 + Math.min(35, activeGame.score / 45)));
+    const result = {
+      id: `result-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+      date: todayKey(),
+      createdAt: new Date().toISOString(),
+      gameId: activeGame.gameId,
+      challengeId: task.challengeId,
+      challengeSpec: task.spec,
+      durationMs: Math.round(durationMs),
+      mistakes: activeGame.mistakes,
+      hintsUsed: activeGame.hintsUsed || 0,
+      accuracy: Math.round(activeGame.accuracy),
+      score: Math.round(activeGame.score),
+      xpEarned,
+      isRepeat: Boolean(task.isRepeat),
+      comparison: previous ? {
+        previousResultId: previous.id,
+        previousDurationMs: previous.durationMs,
+        previousScore: previous.score,
+        previousAccuracy: previous.accuracy
+      } : null
+    };
 
-clearInterval(timerInterval);
-clearInterval(hintInterval);
-if (activeGame.cleanup) activeGame.cleanup();
+    state.results.push(result);
+    state.xp += xpEarned;
+    markDailyTaskComplete(task.id, result.id);
+    updateTrainingStreak(result.date);
+    const newlyUnlocked = updateAchievements();
+    saveState();
+    renderResult(result, newlyUnlocked);
+  }
 
-const durationMs = Math.max(1000, performance.now() - activeGame.startTime);
-const task = activeGame.task;
-const previous = [...state.results].reverse().find(result => result.challengeId === task.challengeId);
-const xpEarned = Math.max(12, Math.round(20 + activeGame.accuracy * .35 + Math.min(30, activeGame.score / 40)));
+  function markDailyTaskComplete(taskId, resultId) {
+    const plan = state.dailyPlans[todayKey()];
+    const task = plan?.tasks?.find(item => item.id === taskId);
+    if (!task) return;
+    task.completed = true;
+    task.resultId = resultId;
+  }
 
-const result = {
-id: `result-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-date: todayKey(),
-createdAt: new Date().toISOString(),
-gameId: activeGame.gameId,
-challengeId: task.challengeId,
-challengeSpec: task.spec,
-durationMs: Math.round(durationMs),
-mistakes: activeGame.mistakes,
-accuracy: Math.round(activeGame.accuracy),
-score: Math.round(activeGame.score),
-xpEarned,
-hintUsed: activeGame.hintUsed,
-isRepeat: Boolean(task.isRepeat),
-comparison: previous ? {
-previousResultId: previous.id,
-previousDurationMs: previous.durationMs,
-previousScore: previous.score,
-previousAccuracy: previous.accuracy
-} : null
-};
+  function renderResult(result, newlyUnlocked) {
+    const stage = getGameStage();
+    const previous = result.comparison;
+    let comparison = 'Первый результат сохранён. При повторе приложение сравнит скорость и точность.';
+    if (previous) {
+      const delta = previous.previousDurationMs - result.durationMs;
+      const scoreDelta = result.score - previous.previousScore;
+      comparison = `${delta > 0 ? `Ты быстрее на ${formatDuration(delta)}` : `Понадобилось на ${formatDuration(Math.abs(delta))} больше`}. ${scoreDelta >= 0 ? `Баллы: +${scoreDelta}` : `Баллы: ${scoreDelta}`}.`;
+    }
 
-state.results.push(result);
-state.xp += xpEarned;
-markDailyTaskComplete(task.id, result.id);
-updateTrainingStreak(result.date);
-const newAchievements = updateAchievements();
-saveState();
-renderResult(result, newAchievements);
-}
+    stage.className = 'game-stage result-stage';
+    stage.innerHTML = `
+      <div class="result-card">
+        <div class="result-icon">${result.accuracy >= 85 ? '✓' : '↗'}</div>
+        <h3>${result.accuracy >= 85 ? 'Отличная работа' : 'Тренировка завершена'}</h3>
+        <p>Результат добавлен в историю развития.</p>
+        <div class="result-stats">
+          <div class="result-stat"><strong>${result.score}</strong><span>баллов</span></div>
+          <div class="result-stat"><strong>${result.accuracy}%</strong><span>точность</span></div>
+          <div class="result-stat"><strong>${formatDuration(result.durationMs)}</strong><span>время</span></div>
+        </div>
+        <div class="comparison">${comparison}</div>
+        ${newlyUnlocked.length ? `<div class="comparison">Новое достижение: ${newlyUnlocked.map(item => `${item.icon} ${item.name}`).join(', ')}</div>` : ''}
+        <div class="button-stack">
+          <button class="primary-button" type="button" data-result-done>Готово</button>
+          <button class="secondary-button" type="button" data-play-again>Сыграть ещё раз</button>
+        </div>
+      </div>`;
 
-function renderResult(result, newAchievements) {
-const previous = result.comparison;
-let comparison = 'Первый результат сохранён. При повторе приложение сравнит скорость и точность.';
+    stage.querySelector('[data-result-done]')?.addEventListener('click', () => {
+      closeGame();
+      render();
+    });
+    stage.querySelector('[data-play-again]')?.addEventListener('click', () => {
+      const gameId = result.gameId;
+      closeGame();
+      const seed = hashString(`${todayKey()}-${gameId}-${Date.now()}-again`);
+      openGame(gameId, {
+        id: `free-${Date.now()}`,
+        gameId,
+        challengeId: `free-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+        spec: makeChallenge(gameId, seed, getAdaptiveLevel(gameId)),
+        isRepeat: false,
+        completed: false,
+        source: 'free'
+      });
+    });
+  }
 
-if (previous) {
-const timeDelta = previous.previousDurationMs - result.durationMs;
-const scoreDelta = result.score - previous.previousScore;
-comparison = `${timeDelta > 0
-? `Ты быстрее на ${formatDuration(timeDelta)}`
-: `Понадобилось на ${formatDuration(Math.abs(timeDelta))} больше`}. ${scoreDelta >= 0 ? `Баллы: +${scoreDelta}` : `Баллы: ${scoreDelta}`}.`;
-}
+  function updateTrainingStreak(date) {
+    if (state.lastTrainingDate === date) return;
+    if (!state.lastTrainingDate) {
+      state.streak = 1;
+    } else {
+      const gap = dayDifference(state.lastTrainingDate, date);
+      state.streak = gap === 1 ? state.streak + 1 : 1;
+    }
+    state.lastTrainingDate = date;
+    state.bestStreak = Math.max(state.bestStreak, state.streak);
+  }
 
-gameStage().innerHTML = `
-<div class="result-card">
-<div class="result-icon">${result.accuracy >= 85 ? '✓' : '↗'}</div>
-<h3>${result.accuracy >= 85 ? 'Отличная работа' : 'Тренировка завершена'}</h3>
-<p>${result.hintUsed ? 'Подсказка помогла разобрать решение. В следующий раз попробуй вспомнить его самостоятельно.' : 'Результат добавлен в историю развития.'}</p>
-<div class="result-stats">
-<div class="result-stat"><strong>${result.score}</strong><span>баллов</span></div>
-<div class="result-stat"><strong>${result.accuracy}%</strong><span>точность</span></div>
-<div class="result-stat"><strong>${formatDuration(result.durationMs)}</strong><span>время</span></div>
-</div>
-<div class="comparison">${comparison}</div>
-${newAchievements.length ? `<div class="comparison">Новое достижение: ${newAchievements.map(item => `${item.icon} ${item.name}`).join(', ')}</div>` : ''}
-<div class="button-stack">
-<button class="primary-button" type="button" data-close-result>Готово</button>
-<button class="secondary-button" type="button" data-play-again>Сыграть ещё раз</button>
-</div>
-</div>
-`;
+  function updateStreakDisplay() {
+    if (streakValue) streakValue.textContent = state.streak;
+  }
 
-gameStage().querySelector('[data-close-result]').addEventListener('click', () => {
-closeGame();
-render();
-});
+  function updateAchievements() {
+    const unlocked = new Set(state.unlockedAchievements);
+    const newlyUnlocked = [];
+    for (const achievement of ACHIEVEMENTS) {
+      if (!unlocked.has(achievement.id) && achievement.test(state)) {
+        unlocked.add(achievement.id);
+        newlyUnlocked.push(achievement);
+      }
+    }
+    state.unlockedAchievements = [...unlocked];
+    return newlyUnlocked;
+  }
 
-gameStage().querySelector('[data-play-again]').addEventListener('click', () => {
-const gameId = result.gameId;
-const task = {
-id: `free-${Date.now()}`,
-gameId,
-challengeId: `free-${Date.now()}`,
-spec: makeChallenge(gameId, hashString(`${Date.now()}-${gameId}`), adaptiveLevel(gameId)),
-isRepeat: false,
-completed: false,
-source: 'free'
-};
-openGame(gameId, task);
-});
-}
+  function hasImprovement(inputState, percent) {
+    const grouped = new Map();
+    for (const result of inputState.results) {
+      if (!result.challengeId || !ACTIVE_GAMES.includes(result.gameId)) continue;
+      if (!grouped.has(result.challengeId)) grouped.set(result.challengeId, []);
+      grouped.get(result.challengeId).push(result);
+    }
+    for (const group of grouped.values()) {
+      if (group.length < 2) continue;
+      group.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      const first = group[0];
+      const last = group[group.length - 1];
+      if (first.durationMs > 0 && (first.durationMs - last.durationMs) / first.durationMs * 100 >= percent) return true;
+    }
+    return false;
+  }
 
-function markDailyTaskComplete(taskId, resultId) {
-const plan = state.dailyPlans[todayKey()];
-const task = plan?.tasks.find(item => item.id === taskId);
-if (!task) return;
-task.completed = true;
-task.resultId = resultId;
-}
+  function countImprovements(results) {
+    return results.filter(result => {
+      const comparison = result.comparison;
+      return comparison && (result.score > comparison.previousScore || result.durationMs < comparison.previousDurationMs);
+    }).length;
+  }
 
-function updateTrainingStreak(date) {
-if (state.lastTrainingDate === date) return;
-const yesterday = dateKey(addDays(new Date(`${date}T12:00:00`), -1));
-state.streak = state.lastTrainingDate === yesterday ? state.streak + 1 : 1;
-state.bestStreak = Math.max(state.bestStreak, state.streak);
-state.lastTrainingDate = date;
-updateStreakDisplay();
-}
+  function getPlayerLevel(xp) {
+    return Math.max(1, Math.floor(Math.sqrt(Math.max(0, xp) / 180)) + 1);
+  }
 
-function updateAchievements() {
-const unlocked = new Set(state.unlockedAchievements);
-const fresh = [];
-ACHIEVEMENTS.forEach(item => {
-if (!unlocked.has(item.id) && item.test(state)) {
-unlocked.add(item.id);
-fresh.push(item);
-}
-});
-state.unlockedAchievements = [...unlocked];
-return fresh;
-}
+  function xpForLevel(level) {
+    return Math.pow(Math.max(0, level - 1), 2) * 180;
+  }
 
-function hasImprovement(inputState, percentage) {
-const grouped = new Map();
-inputState.results.forEach(result => {
-if (!grouped.has(result.challengeId)) grouped.set(result.challengeId, []);
-grouped.get(result.challengeId).push(result);
-});
-return [...grouped.values()].some(group => {
-if (group.length < 2) return false;
-return group[group.length - 1].durationMs <= group[0].durationMs * (1 - percentage / 100);
-});
-}
+  function showToast(message) {
+    clearTimeout(toastTimer);
+    toast.textContent = message;
+    toast.classList.add('is-visible');
+    toastTimer = setTimeout(() => toast.classList.remove('is-visible'), 2200);
+  }
 
-function updateStreakDisplay() {
-streakValue.textContent = state.streak || 0;
-}
+  function todayKey() {
+    return dateKey(new Date());
+  }
 
-function gameStage() {
-return document.getElementById('gameStage');
-}
+  function dateKey(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
 
-function elapsedSeconds() {
-return activeGame?.startTime ? (performance.now() - activeGame.startTime) / 1000 : 0;
-}
+  function dayDifference(from, to) {
+    const a = new Date(`${from}T12:00:00`);
+    const b = new Date(`${to}T12:00:00`);
+    return Math.round((b - a) / 86400000);
+  }
 
-function playerLevel(xp) {
-return Math.max(1, Math.floor(Math.sqrt(xp / 110)) + 1);
-}
+  function formatDuration(ms) {
+    const totalSeconds = Math.max(0, Math.round(Number(ms || 0) / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
+  }
 
-function xpForLevel(level) {
-return Math.max(0, Math.round((level - 1) ** 2 * 110));
-}
+  function formatDateLong(date) {
+    return new Intl.DateTimeFormat('ru-RU', { weekday:'long', day:'numeric', month:'long' }).format(date);
+  }
 
-function todayKey() {
-return dateKey(new Date());
-}
+  function formatDateShort(key) {
+    return new Intl.DateTimeFormat('ru-RU', { day:'numeric', month:'short' }).format(new Date(`${key}T12:00:00`));
+  }
 
-function dateKey(date) {
-const year = date.getFullYear();
-const month = String(date.getMonth() + 1).padStart(2, '0');
-const day = String(date.getDate()).padStart(2, '0');
-return `${year}-${month}-${day}`;
-}
+  function weekdayShort(key) {
+    return new Intl.DateTimeFormat('ru-RU', { weekday:'short' }).format(new Date(`${key}T12:00:00`)).replace('.', '');
+  }
 
-function dayDifference(from, to) {
-const first = new Date(`${from}T12:00:00`);
-const second = new Date(`${to}T12:00:00`);
-return Math.round((second - first) / 86400000);
-}
+  function lastNDays(count) {
+    return Array.from({ length: count }, (_, index) => {
+      const date = new Date();
+      date.setDate(date.getDate() - (count - 1 - index));
+      return dateKey(date);
+    });
+  }
 
-function addDays(date, amount) {
-const result = new Date(date);
-result.setDate(result.getDate() + amount);
-return result;
-}
+  function hashString(value) {
+    let hash = 2166136261;
+    for (let index = 0; index < value.length; index += 1) {
+      hash ^= value.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+  }
 
-function lastSevenDays() {
-const labels = ['вс','пн','вт','ср','чт','пт','сб'];
-return Array.from({ length: 7 }, (_, index) => {
-const date = addDays(new Date(), index - 6);
-return { key: dateKey(date), label: labels[date.getDay()] };
-});
-}
+  function mulberry32(seed) {
+    return function random() {
+      let value = seed += 0x6D2B79F5;
+      value = Math.imul(value ^ value >>> 15, value | 1);
+      value ^= value + Math.imul(value ^ value >>> 7, value | 61);
+      return ((value ^ value >>> 14) >>> 0) / 4294967296;
+    };
+  }
 
-function formatDateLong(date) {
-return new Intl.DateTimeFormat('ru-RU', { weekday:'long', day:'numeric', month:'long' }).format(date);
-}
+  function shuffle(array, rng = Math.random) {
+    for (let index = array.length - 1; index > 0; index -= 1) {
+      const target = Math.floor(rng() * (index + 1));
+      [array[index], array[target]] = [array[target], array[index]];
+    }
+    return array;
+  }
 
-function formatDateShort(value) {
-return new Intl.DateTimeFormat('ru-RU', { day:'numeric', month:'short' }).format(new Date(value));
-}
+  function sampleIndices(total, count, rng) {
+    return shuffle(Array.from({ length: total }, (_, index) => index), rng).slice(0, count).sort((a, b) => a - b);
+  }
 
-function formatDuration(milliseconds) {
-const seconds = Math.max(0, Math.round(milliseconds / 1000));
-return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-}
-
-function hashString(value) {
-let hash = 2166136261;
-for (let index = 0; index < value.length; index += 1) {
-hash ^= value.charCodeAt(index);
-hash = Math.imul(hash, 16777619);
-}
-return hash >>> 0;
-}
-
-function mulberry32(seed) {
-return function random() {
-let value = seed += 0x6D2B79F5;
-value = Math.imul(value ^ value >>> 15, value | 1);
-value ^= value + Math.imul(value ^ value >>> 7, value | 61);
-return ((value ^ value >>> 14) >>> 0) / 4294967296;
-};
-}
-
-function shuffle(values, rng) {
-for (let index = values.length - 1; index > 0; index -= 1) {
-const swapIndex = Math.floor(rng() * (index + 1));
-[values[index], values[swapIndex]] = [values[swapIndex], values[index]];
-}
-return values;
-}
-
-function sampleIndices(total, count, rng) {
-return shuffle(Array.from({ length: total }, (_, index) => index), rng).slice(0, count);
-}
-
-function wait(milliseconds) {
-return new Promise(resolve => setTimeout(resolve, milliseconds));
-}
-
-function showToast(message) {
-clearTimeout(toastTimer);
-toast.textContent = message;
-toast.classList.add('is-visible');
-toastTimer = setTimeout(() => toast.classList.remove('is-visible'), 2200);
-}
+  function wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
 })();
