@@ -1,0 +1,313 @@
+}
+}
+
+return squares.join('');
+}
+
+function pieceName(symbol) {
+const names = {
+'♔': 'Король',
+'♕': 'Ферзь',
+'♖': 'Ладья',
+'♗': 'Слон',
+'♘': 'Конь',
+'♙': 'Пешка',
+'♚': 'Король',
+'♛': 'Ферзь',
+'♜': 'Ладья',
+'♝': 'Слон',
+'♞': 'Конь',
+'♟': 'Пешка'
+};
+return names[symbol] || 'Фигура';
+}
+
+function startHintCountdown(stage) {
+clearInterval(hintInterval);
+const button = stage.querySelector('[data-hint]');
+if (!button) return;
+
+const update = () => {
+if (!activeGame?.startTime || !button.isConnected) return;
+const remaining = Math.max(0, 30 - Math.floor(elapsedSeconds()));
+if (remaining <= 0) {
+button.disabled = false;
+button.textContent = 'Показать подсказку';
+clearInterval(hintInterval);
+} else {
+button.textContent = `Подсказка через 0:${String(remaining).padStart(2, '0')}`;
+}
+};
+
+update();
+hintInterval = setInterval(update, 500);
+}
+
+function gameLayout(instruction, target, content, className, cols) {
+const isPairs = className === 'pairs-grid';
+return `
+<div class="game-hud">
+<div class="hud-chip"><span>${isPairs ? 'Ходы' : 'Цель'}</span><strong data-${isPairs ? 'moves' : 'target'}>${isPairs ? 0 : target}</strong></div>
+<div class="hud-chip"><span>Время</span><strong data-time>0:00</strong></div>
+</div>
+<p class="instruction">${instruction}</p>
+<div class="${className}" style="--cols:${cols}">${content}</div>
+`;
+}
+
+function startHudTimer() {
+clearInterval(timerInterval);
+timerInterval = setInterval(() => {
+const node = modalRoot.querySelector('[data-time]');
+if (node && activeGame?.startTime) {
+node.textContent = formatDuration(performance.now() - activeGame.startTime);
+}
+}, 200);
+}
+
+function updateHudValue(key, value) {
+const node = modalRoot.querySelector(`[data-${key}]`);
+if (node) node.textContent = value;
+}
+
+function finishActiveGame() {
+if (!activeGame) return;
+
+clearInterval(timerInterval);
+clearInterval(hintInterval);
+if (activeGame.cleanup) activeGame.cleanup();
+
+const durationMs = Math.max(1000, performance.now() - activeGame.startTime);
+const task = activeGame.task;
+const previous = [...state.results].reverse().find(result => result.challengeId === task.challengeId);
+const xpEarned = Math.max(12, Math.round(20 + activeGame.accuracy * .35 + Math.min(30, activeGame.score / 40)));
+
+const result = {
+id: `result-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+date: todayKey(),
+createdAt: new Date().toISOString(),
+gameId: activeGame.gameId,
+challengeId: task.challengeId,
+challengeSpec: task.spec,
+durationMs: Math.round(durationMs),
+mistakes: activeGame.mistakes,
+accuracy: Math.round(activeGame.accuracy),
+score: Math.round(activeGame.score),
+xpEarned,
+hintUsed: activeGame.hintUsed,
+isRepeat: Boolean(task.isRepeat),
+comparison: previous ? {
+previousResultId: previous.id,
+previousDurationMs: previous.durationMs,
+previousScore: previous.score,
+previousAccuracy: previous.accuracy
+} : null
+};
+
+state.results.push(result);
+state.xp += xpEarned;
+markDailyTaskComplete(task.id, result.id);
+updateTrainingStreak(result.date);
+const newAchievements = updateAchievements();
+saveState();
+renderResult(result, newAchievements);
+}
+
+function renderResult(result, newAchievements) {
+const previous = result.comparison;
+let comparison = 'Первый результат сохранён. При повторе приложение сравнит скорость и точность.';
+
+if (previous) {
+const timeDelta = previous.previousDurationMs - result.durationMs;
+const scoreDelta = result.score - previous.previousScore;
+comparison = `${timeDelta > 0
+? `Ты быстрее на ${formatDuration(timeDelta)}`
+: `Понадобилось на ${formatDuration(Math.abs(timeDelta))} больше`}. ${scoreDelta >= 0 ? `Баллы: +${scoreDelta}` : `Баллы: ${scoreDelta}`}.`;
+}
+
+gameStage().innerHTML = `
+<div class="result-card">
+<div class="result-icon">${result.accuracy >= 85 ? '✓' : '↗'}</div>
+<h3>${result.accuracy >= 85 ? 'Отличная работа' : 'Тренировка завершена'}</h3>
+<p>${result.hintUsed ? 'Подсказка помогла разобрать решение. В следующий раз попробуй вспомнить его самостоятельно.' : 'Результат добавлен в историю развития.'}</p>
+<div class="result-stats">
+<div class="result-stat"><strong>${result.score}</strong><span>баллов</span></div>
+<div class="result-stat"><strong>${result.accuracy}%</strong><span>точность</span></div>
+<div class="result-stat"><strong>${formatDuration(result.durationMs)}</strong><span>время</span></div>
+</div>
+<div class="comparison">${comparison}</div>
+${newAchievements.length ? `<div class="comparison">Новое достижение: ${newAchievements.map(item => `${item.icon} ${item.name}`).join(', ')}</div>` : ''}
+<div class="button-stack">
+<button class="primary-button" type="button" data-close-result>Готово</button>
+<button class="secondary-button" type="button" data-play-again>Сыграть ещё раз</button>
+</div>
+</div>
+`;
+
+gameStage().querySelector('[data-close-result]').addEventListener('click', () => {
+closeGame();
+render();
+});
+
+gameStage().querySelector('[data-play-again]').addEventListener('click', () => {
+const gameId = result.gameId;
+const task = {
+id: `free-${Date.now()}`,
+gameId,
+challengeId: `free-${Date.now()}`,
+spec: makeChallenge(gameId, hashString(`${Date.now()}-${gameId}`), adaptiveLevel(gameId)),
+isRepeat: false,
+completed: false,
+source: 'free'
+};
+openGame(gameId, task);
+});
+}
+
+function markDailyTaskComplete(taskId, resultId) {
+const plan = state.dailyPlans[todayKey()];
+const task = plan?.tasks.find(item => item.id === taskId);
+if (!task) return;
+task.completed = true;
+task.resultId = resultId;
+}
+
+function updateTrainingStreak(date) {
+if (state.lastTrainingDate === date) return;
+const yesterday = dateKey(addDays(new Date(`${date}T12:00:00`), -1));
+state.streak = state.lastTrainingDate === yesterday ? state.streak + 1 : 1;
+state.bestStreak = Math.max(state.bestStreak, state.streak);
+state.lastTrainingDate = date;
+updateStreakDisplay();
+}
+
+function updateAchievements() {
+const unlocked = new Set(state.unlockedAchievements);
+const fresh = [];
+ACHIEVEMENTS.forEach(item => {
+if (!unlocked.has(item.id) && item.test(state)) {
+unlocked.add(item.id);
+fresh.push(item);
+}
+});
+state.unlockedAchievements = [...unlocked];
+return fresh;
+}
+
+function hasImprovement(inputState, percentage) {
+const grouped = new Map();
+inputState.results.forEach(result => {
+if (!grouped.has(result.challengeId)) grouped.set(result.challengeId, []);
+grouped.get(result.challengeId).push(result);
+});
+return [...grouped.values()].some(group => {
+if (group.length < 2) return false;
+return group[group.length - 1].durationMs <= group[0].durationMs * (1 - percentage / 100);
+});
+}
+
+function updateStreakDisplay() {
+streakValue.textContent = state.streak || 0;
+}
+
+function gameStage() {
+return document.getElementById('gameStage');
+}
+
+function elapsedSeconds() {
+return activeGame?.startTime ? (performance.now() - activeGame.startTime) / 1000 : 0;
+}
+
+function playerLevel(xp) {
+return Math.max(1, Math.floor(Math.sqrt(xp / 110)) + 1);
+}
+
+function xpForLevel(level) {
+return Math.max(0, Math.round((level - 1) ** 2 * 110));
+}
+
+function todayKey() {
+return dateKey(new Date());
+}
+
+function dateKey(date) {
+const year = date.getFullYear();
+const month = String(date.getMonth() + 1).padStart(2, '0');
+const day = String(date.getDate()).padStart(2, '0');
+return `${year}-${month}-${day}`;
+}
+
+function dayDifference(from, to) {
+const first = new Date(`${from}T12:00:00`);
+const second = new Date(`${to}T12:00:00`);
+return Math.round((second - first) / 86400000);
+}
+
+function addDays(date, amount) {
+const result = new Date(date);
+result.setDate(result.getDate() + amount);
+return result;
+}
+
+function lastSevenDays() {
+const labels = ['вс','пн','вт','ср','чт','пт','сб'];
+return Array.from({ length: 7 }, (_, index) => {
+const date = addDays(new Date(), index - 6);
+return { key: dateKey(date), label: labels[date.getDay()] };
+});
+}
+
+function formatDateLong(date) {
+return new Intl.DateTimeFormat('ru-RU', { weekday:'long', day:'numeric', month:'long' }).format(date);
+}
+
+function formatDateShort(value) {
+return new Intl.DateTimeFormat('ru-RU', { day:'numeric', month:'short' }).format(new Date(value));
+}
+
+function formatDuration(milliseconds) {
+const seconds = Math.max(0, Math.round(milliseconds / 1000));
+return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+function hashString(value) {
+let hash = 2166136261;
+for (let index = 0; index < value.length; index += 1) {
+hash ^= value.charCodeAt(index);
+hash = Math.imul(hash, 16777619);
+}
+return hash >>> 0;
+}
+
+function mulberry32(seed) {
+return function random() {
+let value = seed += 0x6D2B79F5;
+value = Math.imul(value ^ value >>> 15, value | 1);
+value ^= value + Math.imul(value ^ value >>> 7, value | 61);
+return ((value ^ value >>> 14) >>> 0) / 4294967296;
+};
+}
+
+function shuffle(values, rng) {
+for (let index = values.length - 1; index > 0; index -= 1) {
+const swapIndex = Math.floor(rng() * (index + 1));
+[values[index], values[swapIndex]] = [values[swapIndex], values[index]];
+}
+return values;
+}
+
+function sampleIndices(total, count, rng) {
+return shuffle(Array.from({ length: total }, (_, index) => index), rng).slice(0, count);
+}
+
+function wait(milliseconds) {
+return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+function showToast(message) {
+clearTimeout(toastTimer);
+toast.textContent = message;
+toast.classList.add('is-visible');
+toastTimer = setTimeout(() => toast.classList.remove('is-visible'), 2200);
+}
+})();

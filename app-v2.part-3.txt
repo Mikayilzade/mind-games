@@ -1,0 +1,315 @@
+blockCols: base.blockCols,
+puzzle: base.puzzle.map(mapDigit),
+solution: base.solution.map(mapDigit)
+};
+}
+
+if (gameId === 'chess') {
+const index = Math.floor(rng() * CHESS_PUZZLES.length);
+return {
+schemaVersion: SCHEMA_VERSION,
+seed,
+...CHESS_PUZZLES[index]
+};
+}
+
+throw new Error(`Unknown game: ${gameId}`);
+}
+
+function sudokuSizeForCount(count) {
+if (count < 1) return 4;
+if (count < 4) return 6;
+return 9;
+}
+
+function openGame(gameId, task) {
+const meta = GAME_META[gameId];
+activeGame = {
+gameId,
+task,
+spec: task.spec,
+startTime: null,
+mistakes: 0,
+score: 0,
+accuracy: 0,
+hintUsed: false,
+cleanup: null
+};
+
+modalRoot.innerHTML = `
+<div class="modal-backdrop">
+<section class="game-modal" role="dialog" aria-modal="true" aria-label="${meta.name}">
+<header class="game-header">
+<button class="icon-button" type="button" data-close-game aria-label="Закрыть">×</button>
+<h2>${meta.name}</h2>
+<span></span>
+</header>
+<div class="game-stage" id="gameStage">
+<div class="game-intro">
+<div class="big-icon" aria-hidden="true">${meta.icon}</div>
+<h3>${task.isRepeat ? 'Проверим, что осталось в памяти' : meta.skill}</h3>
+<p>${task.isRepeat ? 'Это знакомое задание. Новый результат будет сравнен с прежним.' : introDescription(gameId, task.spec)}</p>
+<button class="primary-button" type="button" data-start-game>Начать</button>
+</div>
+</div>
+</section>
+</div>
+`;
+
+modalRoot.querySelector('[data-close-game]').addEventListener('click', closeGame);
+modalRoot.querySelector('[data-start-game]').addEventListener('click', startActiveGame);
+}
+
+function introDescription(gameId, spec) {
+if (gameId === 'sudoku') {
+return `${spec.size}×${spec.size}. В каждой строке, колонке и блоке ${spec.blockRows}×${spec.blockCols} каждое число встречается один раз.`;
+}
+if (gameId === 'chess') {
+return `${spec.side}. Цель: ${spec.goal.toLowerCase()}. Подсказка станет доступна через 30 секунд.`;
+}
+return GAME_META[gameId].description;
+}
+
+function closeGame() {
+clearInterval(timerInterval);
+clearInterval(hintInterval);
+if (activeGame?.cleanup) activeGame.cleanup();
+activeGame = null;
+modalRoot.innerHTML = '';
+}
+
+function startActiveGame() {
+if (!activeGame) return;
+activeGame.startTime = performance.now();
+
+if (activeGame.gameId === 'grid') startGridGame();
+if (activeGame.gameId === 'pairs') startPairsGame();
+if (activeGame.gameId === 'sequence') startSequenceGame();
+if (activeGame.gameId === 'sudoku') startSudokuGame();
+if (activeGame.gameId === 'chess') startChessGame();
+}
+
+function startGridGame() {
+const { cols, targets, previewMs } = activeGame.spec;
+const stage = gameStage();
+let selected = [];
+let canTap = false;
+
+stage.innerHTML = gameLayout(
+'Запомни клетки',
+targets.length,
+Array.from({ length: cols * cols }, (_, index) =>
+`<button class="memory-cell ${targets.includes(index) ? 'is-lit' : ''}" data-cell="${index}" type="button" aria-label="Клетка ${index + 1}"></button>`
+).join(''),
+'memory-grid',
+cols
+);
+
+startHudTimer();
+
+const timeout = setTimeout(() => {
+stage.querySelectorAll('.memory-cell').forEach(cell => cell.classList.remove('is-lit'));
+stage.querySelector('.instruction').textContent = `Выбери ${targets.length} клеток`;
+canTap = true;
+}, previewMs);
+
+const onClick = event => {
+const cell = event.target.closest('[data-cell]');
+if (!cell || !canTap) return;
+
+const index = Number(cell.dataset.cell);
+if (selected.includes(index)) {
+selected = selected.filter(value => value !== index);
+cell.classList.remove('is-selected');
+} else if (selected.length < targets.length) {
+selected.push(index);
+cell.classList.add('is-selected');
+}
+
+if (selected.length === targets.length) {
+canTap = false;
+const correct = selected.filter(value => targets.includes(value)).length;
+const mistakes = targets.length - correct;
+
+stage.querySelectorAll('.memory-cell').forEach((node, indexValue) => {
+if (targets.includes(indexValue)) node.classList.add('is-correct');
+else if (selected.includes(indexValue)) node.classList.add('is-wrong');
+});
+
+activeGame.mistakes = mistakes;
+activeGame.accuracy = Math.round(correct / targets.length * 100);
+activeGame.score = Math.max(100, Math.round(500 + targets.length * 100 - elapsedSeconds() * 8 - mistakes * 90));
+setTimeout(finishActiveGame, 850);
+}
+};
+
+stage.addEventListener('click', onClick);
+activeGame.cleanup = () => {
+clearTimeout(timeout);
+stage.removeEventListener('click', onClick);
+};
+}
+
+function startPairsGame() {
+const { symbols, cols, previewMs } = activeGame.spec;
+const stage = gameStage();
+let open = [];
+const matched = new Set();
+let canTap = false;
+let moves = 0;
+
+stage.innerHTML = gameLayout(
+'Запомни расположение',
+symbols.length / 2,
+symbols.map((symbol, index) =>
+`<button class="pair-card is-open" data-card="${index}" type="button"><span>${symbol}</span></button>`
+).join(''),
+'pairs-grid',
+cols
+);
+
+startHudTimer();
+
+const timeout = setTimeout(() => {
+stage.querySelectorAll('.pair-card').forEach(card => card.classList.remove('is-open'));
+stage.querySelector('.instruction').textContent = 'Открой все пары';
+canTap = true;
+}, previewMs);
+
+const onClick = event => {
+const card = event.target.closest('[data-card]');
+if (!card || !canTap) return;
+
+const index = Number(card.dataset.card);
+if (matched.has(index) || open.includes(index)) return;
+
+card.classList.add('is-open');
+open.push(index);
+
+if (open.length !== 2) return;
+moves += 1;
+updateHudValue('moves', moves);
+canTap = false;
+
+const [first, second] = open;
+if (symbols[first] === symbols[second]) {
+matched.add(first);
+matched.add(second);
+stage.querySelector(`[data-card="${first}"]`).classList.add('is-matched');
+stage.querySelector(`[data-card="${second}"]`).classList.add('is-matched');
+open = [];
+canTap = true;
+
+if (matched.size === symbols.length) {
+const optimal = symbols.length / 2;
+activeGame.mistakes = Math.max(0, moves - optimal);
+activeGame.accuracy = Math.max(0, Math.round(optimal / moves * 100));
+activeGame.score = Math.max(100, Math.round(700 + optimal * 100 - elapsedSeconds() * 6 - activeGame.mistakes * 45));
+setTimeout(finishActiveGame, 500);
+}
+} else {
+activeGame.mistakes += 1;
+setTimeout(() => {
+stage.querySelector(`[data-card="${first}"]`)?.classList.remove('is-open');
+stage.querySelector(`[data-card="${second}"]`)?.classList.remove('is-open');
+open = [];
+canTap = true;
+}, 560);
+}
+};
+
+stage.addEventListener('click', onClick);
+activeGame.cleanup = () => {
+clearTimeout(timeout);
+stage.removeEventListener('click', onClick);
+};
+}
+
+async function startSequenceGame() {
+const session = activeGame;
+const { sequence, paceMs } = session.spec;
+const stage = gameStage();
+let input = [];
+let alive = true;
+
+stage.innerHTML = `
+<div class="game-hud">
+<div class="hud-chip"><span>Длина</span><strong>${sequence.length}</strong></div>
+<div class="hud-chip"><span>Время</span><strong data-time>0:00</strong></div>
+</div>
+<p class="instruction">Следи за последовательностью</p>
+<div class="sequence-display" data-sequence-display></div>
+<div class="sequence-pad" hidden>
+${SEQUENCE_SYMBOLS.map(symbol => `<button class="sequence-key" type="button" data-symbol="${symbol}">${symbol}</button>`).join('')}
+</div>
+`;
+
+startHudTimer();
+session.cleanup = () => { alive = false; };
+
+const display = stage.querySelector('[data-sequence-display]');
+for (let index = 0; index < sequence.length && alive && activeGame === session; index += 1) {
+display.innerHTML = `<span class="sequence-token">${sequence[index]}</span>`;
+await wait(paceMs);
+display.innerHTML = '';
+await wait(Math.max(150, paceMs * .35));
+}
+
+if (!alive || activeGame !== session) return;
+
+stage.querySelector('.instruction').textContent = 'Повтори цепочку';
+stage.querySelector('.sequence-pad').hidden = false;
+
+const onClick = event => {
+const key = event.target.closest('[data-symbol]');
+if (!key) return;
+
+const symbol = key.dataset.symbol;
+const expected = sequence[input.length];
+input.push(symbol);
+display.innerHTML = input.map(value => `<span class="sequence-token">${value}</span>`).join('');
+
+if (symbol !== expected) {
+activeGame.mistakes = 1;
+activeGame.accuracy = Math.round((input.length - 1) / sequence.length * 100);
+activeGame.score = Math.max(50, 250 + (input.length - 1) * 100);
+stage.querySelector('.instruction').textContent = `Нужен был символ ${expected}`;
+stage.querySelector('.sequence-pad').hidden = true;
+setTimeout(finishActiveGame, 850);
+} else if (input.length === sequence.length) {
+activeGame.accuracy = 100;
+activeGame.score = Math.max(100, Math.round(600 + sequence.length * 120 - elapsedSeconds() * 5));
+stage.querySelector('.sequence-pad').hidden = true;
+setTimeout(finishActiveGame, 450);
+}
+};
+
+stage.addEventListener('click', onClick);
+session.cleanup = () => {
+alive = false;
+stage.removeEventListener('click', onClick);
+};
+}
+
+function startSudokuGame() {
+const spec = activeGame.spec;
+const stage = gameStage();
+const values = [...spec.puzzle];
+const errorCells = new Set();
+let selected = values.findIndex(value => value === 0);
+let hintsUsed = 0;
+
+stage.innerHTML = `
+<div class="game-hud">
+<div class="hud-chip"><span>Ошибки</span><strong data-mistakes>0</strong></div>
+<div class="hud-chip"><span>Время</span><strong data-time>0:00</strong></div>
+</div>
+
+<div class="logic-guide">
+<strong>${spec.size}×${spec.size} · блоки ${spec.blockRows}×${spec.blockCols}</strong>
+<span>Каждое число — один раз в строке, колонке и выделенном блоке.</span>
+</div>
+
+<p class="instruction" data-sudoku-message>Выбери пустую клетку и поставь число.</p>
+
+<div class="sudoku-board sudoku-${spec.size}" style="--size:${spec.size}; --block-cols:${spec.blockCols}; --block-rows:${spec.blockRows}">

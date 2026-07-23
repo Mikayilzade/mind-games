@@ -1,0 +1,315 @@
+if (event.target.closest('[data-reset]') && window.confirm('Удалить весь прогресс и начать заново?')) {
+state = defaultState();
+ensureDailyPlan();
+saveState();
+render();
+showToast('Прогресс очищен');
+}
+});
+}
+
+function render() {
+document.querySelectorAll('.nav-item').forEach(item => {
+item.classList.toggle('is-active', item.dataset.route === route);
+});
+
+const titles = {
+today: 'Тренировка',
+games: 'Все игры',
+progress: 'Мой прогресс',
+profile: 'Профиль'
+};
+
+screenTitle.textContent = titles[route];
+todayLabel.textContent = formatDateLong(new Date());
+updateStreakDisplay();
+
+if (route === 'today') renderToday();
+if (route === 'games') renderGames();
+if (route === 'progress') renderProgress();
+if (route === 'profile') renderProfile();
+
+window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function renderToday() {
+const plan = getTodayPlan();
+const completed = plan.tasks.filter(task => task.completed).length;
+const progress = Math.round(completed / plan.tasks.length * 100);
+const todayResults = state.results.filter(result => result.date === todayKey());
+const todayMinutes = Math.round(todayResults.reduce((sum, result) => sum + result.durationMs, 0) / 60000);
+const bestToday = todayResults.length ? Math.max(...todayResults.map(result => result.score)) : 0;
+
+screen.innerHTML = `
+<section class="hero-card">
+<div class="hero-row">
+<div>
+<h2>${completed === plan.tasks.length ? 'Тренировка завершена' : 'Разбуди свой мозг'}</h2>
+<p>${completed === plan.tasks.length
+? 'Сегодня всё готово. Старые задания вернутся позже и покажут, что осталось в памяти.'
+: `Сегодня ${plan.tasks.length} коротких задания — примерно ${plan.estimatedMinutes} минут.`}</p>
+</div>
+<div class="progress-ring" style="--progress:${progress}"><strong>${completed}/${plan.tasks.length}</strong></div>
+</div>
+</section>
+
+<div class="quick-stats">
+<div class="quick-stat"><strong>${state.streak}</strong><span>дней подряд</span></div>
+<div class="quick-stat"><strong>${todayMinutes || '—'}</strong><span>минут сегодня</span></div>
+<div class="quick-stat"><strong>${bestToday || '—'}</strong><span>лучший балл</span></div>
+</div>
+
+<div class="section-head"><h2>План на сегодня</h2><span>${completed}/${plan.tasks.length}</span></div>
+<div class="task-list">${plan.tasks.map(taskCard).join('')}</div>
+
+<div class="section-head"><h2>Как измеряется рост?</h2></div>
+<div class="info-banner">Новые задачи проверяют навык. Повтор прежней задачи через несколько дней проверяет память и сравнивает время, точность и ошибки.</div>
+`;
+}
+
+function taskCard(task) {
+const meta = GAME_META[task.gameId];
+const result = task.resultId ? state.results.find(item => item.id === task.resultId) : null;
+return `
+<button class="task-card ${task.completed ? 'is-complete' : ''}" type="button" data-task-id="${task.id}">
+<span class="task-icon" aria-hidden="true">${meta.icon}</span>
+<span>
+<h3>${meta.name}</h3>
+<p>${task.completed && result ? `${result.score} баллов · ${formatDuration(result.durationMs)}` : describeChallenge(task)}</p>
+${task.isRepeat ? '<span class="repeat-badge">↻ Проверка памяти</span>' : ''}
+</span>
+<span class="task-status" aria-hidden="true">${task.completed ? '✓' : '›'}</span>
+</button>
+`;
+}
+
+function describeChallenge(task) {
+const spec = task.spec;
+if (task.gameId === 'grid') return `Запомнить ${spec.targets.length} клеток`;
+if (task.gameId === 'pairs') return `${spec.symbols.length / 2} пар`;
+if (task.gameId === 'sequence') return `Цепочка из ${spec.sequence.length} символов`;
+if (task.gameId === 'sudoku') return `${spec.size}×${spec.size} · блоки ${spec.blockRows}×${spec.blockCols}`;
+if (task.gameId === 'chess') return spec.goal;
+return GAME_META[task.gameId].skill;
+}
+
+function renderGames() {
+const sudokuCount = state.results.filter(result => result.gameId === 'sudoku').length;
+const nextSudoku = sudokuSizeForCount(sudokuCount);
+screen.innerHTML = `
+<div class="info-banner">Можно играть без ограничения. Ежедневный план отдельно подбирает сложность и возвращает старые задания.</div>
+<div class="games-grid">
+${Object.entries(GAME_META).map(([id, meta]) => `
+<button class="game-card" type="button" data-game-id="${id}">
+<span class="game-icon" aria-hidden="true">${meta.icon}</span>
+<h3>${meta.name}</h3>
+<p>${meta.description}</p>
+<span class="game-meta">${id === 'sudoku' ? `Сейчас: ${nextSudoku}×${nextSudoku}` : `${state.results.filter(result => result.gameId === id).length} результатов`}</span>
+</button>
+`).join('')}
+</div>
+`;
+}
+
+function renderProgress() {
+const total = state.results.length;
+const average = total ? Math.round(state.results.reduce((sum, result) => sum + result.accuracy, 0) / total) : 0;
+const minutes = Math.round(state.results.reduce((sum, result) => sum + result.durationMs, 0) / 60000);
+const repeats = state.results.filter(result => result.isRepeat).length;
+const days = lastSevenDays();
+
+screen.innerHTML = `
+<div class="metrics-grid">
+<div class="metric-card"><span>Тренировок</span><strong>${total}</strong><em>${minutes} минут практики</em></div>
+<div class="metric-card"><span>Средняя точность</span><strong>${total ? `${average}%` : '—'}</strong><em>${repeats} повторов памяти</em></div>
+</div>
+
+<div class="section-head"><h2>Последние 7 дней</h2><span>активность</span></div>
+<section class="chart-card">
+<div class="bar-chart">
+${days.map(day => {
+const count = state.results.filter(result => result.date === day.key).length;
+return `<div class="bar-col"><div class="bar-track"><div class="bar" style="--height:${Math.min(100, count * 28)}%"></div></div><span>${day.label}</span></div>`;
+}).join('')}
+</div>
+</section>
+
+<div class="section-head"><h2>История</h2><span>${Math.min(10, total)} последних</span></div>
+<div class="timeline">
+${total ? [...state.results].reverse().slice(0, 10).map(result => `
+<div class="timeline-item">
+<span class="timeline-dot"></span>
+<div class="timeline-body">
+<h3>${GAME_META[result.gameId]?.name || result.gameId} · ${result.score} баллов</h3>
+<p>${formatDateShort(result.createdAt)} · ${formatDuration(result.durationMs)} · точность ${result.accuracy}%${result.isRepeat ? ' · повтор' : ''}</p>
+</div>
+</div>
+`).join('') : '<div class="empty-state"><strong>История ещё пуста</strong>Заверши первую игру, и здесь появится результат.</div>'}
+</div>
+`;
+}
+
+function renderProfile() {
+const level = playerLevel(state.xp);
+const levelStart = xpForLevel(level);
+const levelEnd = xpForLevel(level + 1);
+const levelProgress = Math.round((state.xp - levelStart) / Math.max(1, levelEnd - levelStart) * 100);
+const unlocked = new Set(state.unlockedAchievements);
+
+screen.innerHTML = `
+<section class="profile-card">
+<div class="profile-head">
+<div class="avatar">🧠</div>
+<div><h2>Уровень ${level}</h2><p>${state.xp} опыта · до следующего ${Math.max(0, levelEnd - state.xp)}</p></div>
+</div>
+<div class="level-track"><div class="level-fill" style="--width:${levelProgress}%"></div></div>
+</section>
+
+<div class="section-head"><h2>Достижения</h2><span>${unlocked.size}/${ACHIEVEMENTS.length}</span></div>
+<div class="achievement-grid">
+${ACHIEVEMENTS.map(item => `<div class="achievement ${unlocked.has(item.id) ? '' : 'is-locked'}"><span class="achievement-icon">${item.icon}</span><strong>${item.name}</strong></div>`).join('')}
+</div>
+
+<div class="section-head"><h2>О приложении</h2></div>
+<section class="profile-card">
+<div class="profile-row"><span>Данные</span><strong>Хранятся на этом устройстве</strong></div>
+<div class="profile-row"><span>Судоку</span><strong>4×4 → 6×6 → 9×9</strong></div>
+<div class="profile-row"><span>Подсказки</span><strong>Открываются через 30 секунд</strong></div>
+<div class="profile-row"><span>Версия</span><strong>1.1.0</strong></div>
+</section>
+
+<section class="profile-card">
+<div class="profile-row"><span>Начать с чистого листа</span><button class="danger-button" type="button" data-reset>Удалить прогресс</button></div>
+</section>
+`;
+}
+
+function ensureDailyPlan() {
+const date = todayKey();
+if (state.dailyPlans[date]) return;
+
+const seed = hashString(date);
+const rng = mulberry32(seed);
+const due = findDueRepeat();
+const chosen = [];
+
+if (due) chosen.push(due.gameId);
+for (const id of shuffle(Object.keys(GAME_META), rng)) {
+if (!chosen.includes(id)) chosen.push(id);
+if (chosen.length === 3) break;
+}
+
+const tasks = chosen.map((gameId, index) => {
+if (due && index === 0 && gameId === due.gameId) {
+return {
+id: `${date}-repeat-${due.challengeId}`,
+gameId,
+challengeId: due.challengeId,
+spec: due.challengeSpec,
+isRepeat: true,
+repeatSourceResultId: due.id,
+completed: false,
+source: 'daily'
+};
+}
+
+const challengeSeed = hashString(`${date}-${gameId}-${index}-v2`);
+return {
+id: `${date}-${gameId}-${index}-v2`,
+gameId,
+challengeId: `${date}-${gameId}-${index}-v2`,
+spec: makeChallenge(gameId, challengeSeed, adaptiveLevel(gameId)),
+isRepeat: false,
+completed: false,
+source: 'daily'
+};
+});
+
+state.dailyPlans[date] = { date, estimatedMinutes: 8, tasks };
+saveState();
+}
+
+function getTodayPlan() {
+ensureDailyPlan();
+return state.dailyPlans[todayKey()];
+}
+
+function findDueRepeat() {
+const today = todayKey();
+const candidates = state.results.filter(result => {
+if (result.challengeSpec?.schemaVersion !== SCHEMA_VERSION) return false;
+const age = dayDifference(result.date, today);
+if (age < 5 || age > 30) return false;
+return !state.results.some(other =>
+other.challengeId === result.challengeId &&
+other.id !== result.id &&
+dayDifference(other.date, today) < 5
+);
+});
+
+candidates.sort((a, b) =>
+Math.abs(dayDifference(a.date, today) - 8) -
+Math.abs(dayDifference(b.date, today) - 8)
+);
+
+return candidates[0] || null;
+}
+
+function adaptiveLevel(gameId) {
+const results = state.results.filter(result => result.gameId === gameId);
+if (!results.length) return 1;
+const recent = results.slice(-4);
+const average = recent.reduce((sum, result) => sum + result.accuracy, 0) / recent.length;
+const base = Math.min(7, 1 + Math.floor(results.length / 3));
+return Math.max(1, average >= 85 ? base + 1 : average < 60 ? base - 1 : base);
+}
+
+function makeChallenge(gameId, seed, level) {
+const rng = mulberry32(seed);
+
+if (gameId === 'grid') {
+const cols = level >= 5 ? 5 : 4;
+const total = cols * cols;
+const count = Math.min(total - 4, 3 + Math.floor(level * .8));
+return {
+schemaVersion: SCHEMA_VERSION,
+seed,
+cols,
+targets: sampleIndices(total, count, rng),
+previewMs: Math.max(1100, 2300 - level * 130)
+};
+}
+
+if (gameId === 'pairs') {
+const pairCount = Math.min(8, 3 + Math.floor(level / 2));
+const chosen = shuffle([...SYMBOLS], rng).slice(0, pairCount);
+return {
+schemaVersion: SCHEMA_VERSION,
+seed,
+cols: pairCount <= 4 ? 3 : 4,
+symbols: shuffle([...chosen, ...chosen], rng),
+previewMs: Math.max(1800, 3400 - level * 160)
+};
+}
+
+if (gameId === 'sequence') {
+const length = Math.min(10, 3 + level);
+return {
+schemaVersion: SCHEMA_VERSION,
+seed,
+sequence: Array.from({ length }, () => SEQUENCE_SYMBOLS[Math.floor(rng() * SEQUENCE_SYMBOLS.length)]),
+paceMs: Math.max(360, 720 - level * 40)
+};
+}
+
+if (gameId === 'sudoku') {
+const count = state.results.filter(result => result.gameId === 'sudoku').length;
+const size = sudokuSizeForCount(count);
+const base = SUDOKU_LIBRARY[size];
+const digitOrder = shuffle(Array.from({ length: size }, (_, index) => index + 1), rng);
+const mapDigit = value => value ? digitOrder[value - 1] : 0;
+return {
+schemaVersion: SCHEMA_VERSION,
+seed,
+size,
+blockRows: base.blockRows,
