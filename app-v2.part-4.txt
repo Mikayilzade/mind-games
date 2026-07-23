@@ -1,0 +1,315 @@
+${values.map((value, index) => sudokuCellMarkup(index, value, spec, selected)).join('')}
+</div>
+
+<div class="sudoku-pad" style="--size:${Math.min(spec.size, 6)}">
+${Array.from({ length: spec.size }, (_, index) => index + 1)
+.map(number => `<button class="sudoku-key" type="button" data-number="${number}">${number}</button>`).join('')}
+<button class="sudoku-key sudoku-erase" type="button" data-erase aria-label="Очистить клетку">⌫</button>
+</div>
+
+<div class="game-actions">
+<button class="secondary-button" type="button" data-check-sudoku>Проверить</button>
+<button class="secondary-button hint-button" type="button" data-hint disabled>Подсказка через 0:30</button>
+</div>
+`;
+
+startHudTimer();
+startHintCountdown(stage);
+
+const board = stage.querySelector('.sudoku-board');
+const message = stage.querySelector('[data-sudoku-message]');
+
+function renderSudokuState() {
+board.innerHTML = values.map((value, index) => {
+const fixed = spec.puzzle[index] !== 0;
+const classes = sudokuCellClasses(index, value, selected, values, spec, fixed, errorCells);
+return `<button class="${classes}" type="button" data-sudoku-cell="${index}" ${fixed ? 'disabled' : ''}>${value || ''}</button>`;
+}).join('');
+}
+
+const onClick = event => {
+const cell = event.target.closest('[data-sudoku-cell]');
+if (cell) {
+selected = Number(cell.dataset.sudokuCell);
+errorCells.delete(selected);
+renderSudokuState();
+const candidates = sudokuCandidates(selected, values, spec);
+message.textContent = candidates.length
+? `Возможные числа по текущему полю: ${candidates.join(', ')}`
+: 'В этой клетке возник конфликт. Проверь строку, колонку и блок.';
+return;
+}
+
+const numberButton = event.target.closest('[data-number]');
+if (numberButton && selected >= 0 && spec.puzzle[selected] === 0) {
+const number = Number(numberButton.dataset.number);
+values[selected] = number;
+errorCells.delete(selected);
+
+const conflicts = sudokuConflicts(selected, values, spec);
+if (conflicts.length) {
+errorCells.add(selected);
+conflicts.forEach(index => errorCells.add(index));
+activeGame.mistakes += 1;
+updateHudValue('mistakes', activeGame.mistakes);
+message.textContent = `Число ${number} уже встречается в этой строке, колонке или блоке.`;
+} else {
+message.textContent = 'Хорошо. Теперь найди следующую клетку с наименьшим числом вариантов.';
+}
+
+renderSudokuState();
+checkSudokuCompletion();
+return;
+}
+
+if (event.target.closest('[data-erase]') && selected >= 0 && spec.puzzle[selected] === 0) {
+values[selected] = 0;
+errorCells.delete(selected);
+renderSudokuState();
+message.textContent = 'Клетка очищена.';
+return;
+}
+
+if (event.target.closest('[data-check-sudoku]')) {
+errorCells.clear();
+values.forEach((value, index) => {
+if (value && value !== spec.solution[index]) errorCells.add(index);
+});
+
+if (errorCells.size) {
+activeGame.mistakes += errorCells.size;
+updateHudValue('mistakes', activeGame.mistakes);
+message.textContent = `Найдено неверных клеток: ${errorCells.size}. Они отмечены красным.`;
+} else {
+message.textContent = values.includes(0)
+? 'Все заполненные клетки верны. Продолжай.'
+: 'Решение верное.';
+}
+
+renderSudokuState();
+checkSudokuCompletion();
+return;
+}
+
+if (event.target.closest('[data-hint]:not([disabled])')) {
+let target = selected;
+if (target < 0 || spec.puzzle[target] !== 0 || values[target] === spec.solution[target]) {
+target = values.findIndex((value, index) => spec.puzzle[index] === 0 && value !== spec.solution[index]);
+}
+if (target < 0) return;
+
+selected = target;
+values[target] = spec.solution[target];
+errorCells.delete(target);
+hintsUsed += 1;
+activeGame.hintUsed = true;
+activeGame.mistakes += 1;
+updateHudValue('mistakes', activeGame.mistakes);
+const row = Math.floor(target / spec.size) + 1;
+const col = target % spec.size + 1;
+message.textContent = `Подсказка: строка ${row}, колонка ${col} — число ${spec.solution[target]}. Посмотри, какие числа уже исключены строкой, колонкой и блоком.`;
+renderSudokuState();
+stage.querySelector(`[data-sudoku-cell="${target}"]`)?.classList.add('is-hinted');
+checkSudokuCompletion();
+}
+};
+
+function checkSudokuCompletion() {
+if (values.some((value, index) => value !== spec.solution[index])) return;
+const empties = spec.puzzle.filter(value => value === 0).length;
+activeGame.accuracy = Math.max(25, Math.round(100 - activeGame.mistakes * (75 / Math.max(1, empties))));
+activeGame.score = Math.max(100, Math.round(
+700 + spec.size * 90 - elapsedSeconds() * (spec.size === 9 ? 2 : 5) - activeGame.mistakes * 55 - hintsUsed * 80
+));
+message.textContent = 'Готово: все строки, колонки и блоки заполнены правильно.';
+stage.querySelectorAll('button').forEach(button => {
+if (!button.matches('[data-close-game]')) button.disabled = true;
+});
+setTimeout(finishActiveGame, 900);
+}
+
+stage.addEventListener('click', onClick);
+activeGame.cleanup = () => stage.removeEventListener('click', onClick);
+}
+
+function sudokuCellMarkup(index, value, spec, selected) {
+return `<button class="${sudokuCellClasses(index, value, selected, spec.puzzle, spec, Boolean(value), new Set())}" type="button" data-sudoku-cell="${index}" ${value ? 'disabled' : ''}>${value || ''}</button>`;
+}
+
+function sudokuCellClasses(index, value, selected, values, spec, fixed, errorCells) {
+const classes = ['sudoku-cell'];
+const row = Math.floor(index / spec.size);
+const col = index % spec.size;
+
+if (fixed) classes.push('is-fixed');
+else if (value) classes.push('is-user');
+
+if (index === selected) classes.push('is-active');
+if (selected >= 0 && index !== selected && sudokuPeers(index, selected, spec)) classes.push('is-peer');
+if (selected >= 0 && values[selected] && value === values[selected] && index !== selected) classes.push('is-same');
+if (errorCells.has(index)) classes.push('is-error');
+
+if ((col + 1) % spec.blockCols === 0 && col !== spec.size - 1) classes.push('block-right');
+if ((row + 1) % spec.blockRows === 0 && row !== spec.size - 1) classes.push('block-bottom');
+
+return classes.join(' ');
+}
+
+function sudokuPeers(indexA, indexB, spec) {
+const rowA = Math.floor(indexA / spec.size);
+const colA = indexA % spec.size;
+const rowB = Math.floor(indexB / spec.size);
+const colB = indexB % spec.size;
+
+const sameRow = rowA === rowB;
+const sameCol = colA === colB;
+const sameBlock =
+Math.floor(rowA / spec.blockRows) === Math.floor(rowB / spec.blockRows) &&
+Math.floor(colA / spec.blockCols) === Math.floor(colB / spec.blockCols);
+
+return sameRow || sameCol || sameBlock;
+}
+
+function sudokuConflicts(index, values, spec) {
+const value = values[index];
+if (!value) return [];
+return values
+.map((other, otherIndex) => ({ other, otherIndex }))
+.filter(item => item.otherIndex !== index && item.other === value && sudokuPeers(index, item.otherIndex, spec))
+.map(item => item.otherIndex);
+}
+
+function sudokuCandidates(index, values, spec) {
+if (index < 0 || values[index]) return [];
+const used = new Set();
+values.forEach((value, otherIndex) => {
+if (value && sudokuPeers(index, otherIndex, spec)) used.add(value);
+});
+return Array.from({ length: spec.size }, (_, itemIndex) => itemIndex + 1).filter(value => !used.has(value));
+}
+
+function startChessGame() {
+const spec = activeGame.spec;
+const stage = gameStage();
+let selected = null;
+let locked = false;
+
+stage.innerHTML = `
+<div class="game-hud">
+<div class="hud-chip"><span>Ошибки</span><strong data-attempts>0</strong></div>
+<div class="hud-chip"><span>Время</span><strong data-time>0:00</strong></div>
+</div>
+
+<div class="chess-task">
+<span class="side-badge">${spec.side}</span>
+<strong>${spec.goal}</strong>
+<span>Выбери белую фигуру, затем поле назначения.</span>
+</div>
+
+<p class="instruction" data-chess-message>Сначала найди цель хода, затем проверяй конкретный вариант.</p>
+
+<div class="chess-board" aria-label="Шахматная доска">
+${chessBoardMarkup(spec)}
+</div>
+
+<div class="game-actions chess-actions">
+<button class="secondary-button hint-button" type="button" data-hint disabled>Подсказка через 0:30</button>
+</div>
+`;
+
+startHudTimer();
+startHintCountdown(stage);
+
+const board = stage.querySelector('.chess-board');
+const message = stage.querySelector('[data-chess-message]');
+
+const onClick = event => {
+const hint = event.target.closest('[data-hint]:not([disabled])');
+if (hint) {
+activeGame.hintUsed = true;
+message.textContent = `${spec.hint} Ожидался ход: ${spec.move}.`;
+board.querySelector(`[data-square="${spec.from}"]`)?.classList.add('is-hint-from');
+board.querySelector(`[data-square="${spec.to}"]`)?.classList.add('is-hint-to');
+hint.textContent = 'Решение показано';
+hint.disabled = true;
+return;
+}
+
+const continueButton = event.target.closest('[data-chess-finish]');
+if (continueButton) {
+finishActiveGame();
+return;
+}
+
+const square = event.target.closest('[data-square]');
+if (!square || locked) return;
+
+const coord = square.dataset.square;
+const piece = spec.pieces[coord];
+
+if (!selected) {
+if (!piece || piece[1] !== 'white') {
+message.textContent = 'Ход белых: сначала выбери белую фигуру.';
+return;
+}
+selected = coord;
+board.querySelectorAll('.chess-square').forEach(node => node.classList.remove('is-selected'));
+square.classList.add('is-selected');
+message.textContent = `${pieceName(piece[0])} ${coord} выбрана. Теперь укажи поле назначения.`;
+return;
+}
+
+if (piece?.[1] === 'white') {
+selected = coord;
+board.querySelectorAll('.chess-square').forEach(node => node.classList.remove('is-selected'));
+square.classList.add('is-selected');
+message.textContent = `${pieceName(piece[0])} ${coord} выбрана.`;
+return;
+}
+
+const from = selected;
+selected = null;
+board.querySelectorAll('.chess-square').forEach(node => node.classList.remove('is-selected'));
+
+if (from === spec.from && coord === spec.to) {
+locked = true;
+board.querySelector(`[data-square="${spec.from}"]`)?.classList.add('is-solution-from');
+board.querySelector(`[data-square="${spec.to}"]`)?.classList.add('is-solution-to');
+message.innerHTML = `<strong>${spec.move}</strong><br>${spec.explanation}`;
+activeGame.accuracy = Math.max(25, 100 - activeGame.mistakes * 25 - (activeGame.hintUsed ? 20 : 0));
+activeGame.score = Math.max(100, Math.round(900 - elapsedSeconds() * 5 - activeGame.mistakes * 120 - (activeGame.hintUsed ? 140 : 0)));
+stage.querySelector('.chess-actions').innerHTML = '<button class="primary-button" type="button" data-chess-finish>Понятно, дальше</button>';
+} else {
+activeGame.mistakes += 1;
+updateHudValue('attempts', activeGame.mistakes);
+const fromPiece = spec.pieces[from];
+message.textContent = `${pieceName(fromPiece?.[0])} ${from} → ${coord} не выполняет цель «${spec.goal.toLowerCase()}». Попробуй другой ход.`;
+square.classList.add('is-wrong-move');
+setTimeout(() => square.classList.remove('is-wrong-move'), 500);
+}
+};
+
+stage.addEventListener('click', onClick);
+activeGame.cleanup = () => stage.removeEventListener('click', onClick);
+}
+
+function chessBoardMarkup(spec) {
+const squares = [];
+
+for (let rank = 8; rank >= 1; rank -= 1) {
+for (let file = 0; file < 8; file += 1) {
+const fileLetter = String.fromCharCode(97 + file);
+const coord = `${fileLetter}${rank}`;
+const light = (file + rank) % 2 === 1;
+const piece = spec.pieces[coord];
+const labels = [
+file === 0 ? `<span class="rank-label">${rank}</span>` : '',
+rank === 1 ? `<span class="file-label">${fileLetter}</span>` : ''
+].join('');
+
+squares.push(`
+<button class="chess-square ${light ? 'is-light' : 'is-dark'}" type="button" data-square="${coord}" aria-label="${coord}">
+${piece ? `<span class="chess-piece is-${piece[1]}">${piece[0]}</span>` : ''}
+${labels}
+</button>
+`);
