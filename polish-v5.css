@@ -21,11 +21,8 @@
 }
 
 .sequence-display:empty::after {
-  content: 'Запомненная цепочка появится здесь';
-  grid-column: 1 / -1;
-  color: var(--muted);
-  font-size: 12px;
-  text-align: center;
+  content: '';
+  display: none;
 }
 
 .sequence-display .sequence-token {
@@ -47,9 +44,60 @@
   background: rgba(255,255,255,.045);
 }
 
+.sudoku-number.is-active-number {
+  color: #fff;
+  background: linear-gradient(145deg, var(--accent), var(--accent-2));
+  border-color: transparent;
+  box-shadow: 0 8px 20px rgba(120,86,216,.24);
+}
+
+.sudoku-status:empty {
+  min-height: 8px;
+}
+
+.brain-card {
+  margin-bottom: 18px;
+  padding: 20px;
+  border-radius: 26px;
+  background: linear-gradient(145deg, rgba(124,92,224,.12), rgba(47,156,179,.08)), var(--surface-strong);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-soft, 0 12px 35px rgba(73,55,105,.08));
+}
+
+.brain-card-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+.brain-kicker {
+  display: block;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .11em;
+  margin-bottom: 4px;
+}
+
+.brain-card h2 { margin: 0 0 5px; font-size: 26px; }
+.brain-card-head p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.brain-level { width: 58px; height: 58px; border-radius: 19px; display: grid; place-items: center; font-size: 29px; background: var(--accent-soft); }
+.brain-stats { display: grid; gap: 13px; }
+.brain-stat-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.brain-stat-row strong { font-size: 13px; }
+.brain-stat-row span { color: var(--accent); font-size: 12px; font-weight: 900; font-variant-numeric: tabular-nums; }
+.brain-stat-track { height: 7px; margin-top: 6px; overflow: hidden; border-radius: 999px; background: var(--surface-soft); }
+.brain-stat-track i { display: block; height: 100%; width: var(--stat); border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--cyan)); }
+.brain-stat small { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; }
+.brain-disclaimer { margin: 16px 0 0; color: var(--muted); font-size: 9px; text-align: center; line-height: 1.4; }
+
 @media (max-width: 430px) {
   .sequence-display,
   .sequence-pad { max-width: 94vw; }
   .sequence-display { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .sequence-display .sequence-token { width: 42px; height: 42px; }
+  .brain-card { padding: 17px; }
 }
