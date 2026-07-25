@@ -95,6 +95,8 @@
       'brain card profile'
     );
 
+    source = source.replace('<div class="profile-row"><span>Версия</span><strong>1.3.0</strong></div>', '<div class="profile-row"><span>Версия</span><strong>1.5.0</strong></div>');
+
     const run = new Function(source);
     run();
   }).catch(error => {
