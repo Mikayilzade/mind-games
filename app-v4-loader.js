@@ -66,12 +66,6 @@
     );
 
     source = patch(source,
-      `       renderBoard();\n       if (!conflicts.size && values.every(Boolean)) finishSudoku();`,
-      `       if (values.filter(value => value === number).length >= 9 && lockedNumber === number) lockedNumber = 0;\n       renderBoard();\n       if (!conflicts.size && values.every(Boolean)) finishSudoku();`,
-      'unlock completed number'
-    );
-
-    source = patch(source,
       `    const boardClick = event => {\n      const cell = event.target.closest('[data-sudoku-cell]');\n      if (!cell) return;\n      selected = Number(cell.dataset.sudokuCell);\n      hintTarget = -1;\n      renderBoard();\n    };`,
       `    const boardClick = event => {\n      const cell = event.target.closest('[data-sudoku-cell]');\n      if (!cell) return;\n      selected = Number(cell.dataset.sudokuCell);\n      hintTarget = -1;\n      if (lockedNumber && spec.puzzle[selected] === 0 && !values[selected]) enterNumber(lockedNumber);\n      else renderBoard();\n    };`,
       'tap cell with locked number'
