@@ -1,15 +1,15 @@
-const CACHE = 'mind-games-v5';
+const CACHE = 'mind-games-v6';
 const ASSETS = [
   './',
   './index.html',
-  './theme-v4-base.css?v=1.4.0',
-  './theme-v4-games.css?v=1.4.0',
-  './polish-v5.css?v=1.4.0',
-  './app-v4-loader.js?v=1.4.0',
-  './app-v4.part-1.txt?v=1.4.0',
-  './app-v4.part-2.txt?v=1.4.0',
-  './app-v4.part-3.txt?v=1.4.0',
-  './app-v4.part-4.txt?v=1.4.0',
+  './theme-v4-base.css?v=1.5.0',
+  './theme-v4-games.css?v=1.5.0',
+  './polish-v5.css?v=1.5.0',
+  './app-v4-loader.js?v=1.5.0',
+  './app-v4.part-1.txt?v=1.5.0',
+  './app-v4.part-2.txt?v=1.5.0',
+  './app-v4.part-3.txt?v=1.5.0',
+  './app-v4.part-4.txt?v=1.5.0',
   './manifest.webmanifest',
   './icons/icon.svg',
   './icons/apple-touch-icon.svg'
